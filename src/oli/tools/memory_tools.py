@@ -44,9 +44,7 @@ REMEMBER_SCHEMA = {
         ),
         "parameters": {
             "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "The fact to remember."}
-            },
+            "properties": {"content": {"type": "string", "description": "The fact to remember."}},
             "required": ["content"],
         },
     },

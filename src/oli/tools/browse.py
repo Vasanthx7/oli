@@ -10,6 +10,7 @@ defensively: we try browser-use's own chat classes first, then fall back to lang
 """
 
 import asyncio
+from typing import Any
 
 from .. import config
 
@@ -25,13 +26,13 @@ def _build_llm():
     """
     # Native Groq adapter — talks to Groq directly, no base_url needed.
     try:
-        from browser_use import ChatGroq  # type: ignore
+        from browser_use import ChatGroq
 
         return ChatGroq(model=config.BROWSER_MODEL, api_key=config.GROQ_API_KEY)
     except Exception:
         pass
     # Fallback: OpenAI-compatible adapter pointed at Groq's endpoint.
-    from browser_use import ChatOpenAI  # type: ignore
+    from browser_use import ChatOpenAI
 
     return ChatOpenAI(
         model=config.BROWSER_MODEL,
@@ -56,7 +57,7 @@ def _extract_result(history) -> str:
 
 async def browse(goal: str) -> str:
     try:
-        from browser_use import Agent  # type: ignore
+        from browser_use import Agent
     except Exception as e:  # noqa: BLE001
         return f"browse unavailable: could not import browser-use ({e})"
 
@@ -66,7 +67,7 @@ async def browse(goal: str) -> str:
         return f"browse unavailable: could not build LLM adapter ({e})"
 
     try:
-        agent = Agent(task=goal, llm=llm)
+        agent: Any = Agent(task=goal, llm=llm)
         # Some versions accept max_steps on run(); tolerate signature differences.
         try:
             history = await agent.run(max_steps=MAX_STEPS)

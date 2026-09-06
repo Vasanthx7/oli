@@ -15,7 +15,7 @@ The loop yields typed events so the web layer can render streaming text and tool
 """
 
 import asyncio
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from . import memory, tools
 from .llm import LLMClient, parse_arguments
@@ -130,9 +130,7 @@ async def run_turn(
                     "result": result[:_TOOL_PREVIEW_LEN],
                 }
 
-                store.add_message(
-                    conversation_id, "tool", result, tool_name=name
-                )
+                store.add_message(conversation_id, "tool", result, tool_name=name)
                 messages.append(
                     {
                         "role": "tool",

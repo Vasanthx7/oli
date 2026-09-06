@@ -7,7 +7,7 @@ assembled message (content + any tool_calls) so the agent loop can act on it.
 """
 
 import json
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 
 from openai import AsyncOpenAI
 
@@ -26,7 +26,7 @@ class LLMClient:
     async def stream_completion(
         self,
         messages: list[dict],
-        tools: Optional[list[dict]] = None,
+        tools: list[dict] | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Stream one model turn.
 

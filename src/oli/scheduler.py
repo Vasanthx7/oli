@@ -12,6 +12,7 @@ Schedules:
 """
 
 import asyncio
+import contextlib
 from datetime import datetime, timedelta
 
 from .agent import run_once
@@ -80,23 +81,19 @@ class Scheduler:
         self._stop.set()
         if self._task:
             self._task.cancel()
-            try:
+            # CancelledError is a BaseException, not Exception — suppress it explicitly.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
             self._task = None
 
     async def _loop(self) -> None:
         while not self._stop.is_set():
-            try:
+            # Never let one bad tick kill the scheduler.
+            with contextlib.suppress(Exception):
                 await self._run_due()
-            except Exception:
-                # Never let one bad tick kill the scheduler.
-                pass
-            try:
+            # Wake early if we're asked to stop; otherwise sleep one tick.
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=TICK_SECONDS)
-            except asyncio.TimeoutError:
-                pass
 
     async def _run_due(self) -> None:
         import time
@@ -131,8 +128,10 @@ class Scheduler:
 
         if scheduled:
             nxt = compute_next_run(
-                task["schedule_kind"], started,
-                task.get("interval_sec"), task.get("time_of_day"),
+                task["schedule_kind"],
+                started,
+                task.get("interval_sec"),
+                task.get("time_of_day"),
             )
             self._store.update_task_schedule(task["id"], started, nxt)
         return result
@@ -143,6 +142,7 @@ class Scheduler:
         if not self._store.conversation_exists(conv_id):
             # create_conversation generates its own id, so insert directly with our id.
             import time
+
             with self._store._lock:  # reuse the store's lock for a direct insert
                 self._store._conn.execute(
                     "INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) "

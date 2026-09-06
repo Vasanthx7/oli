@@ -15,8 +15,6 @@ Three write/read paths:
 import asyncio
 import json
 
-import numpy as np
-
 from . import embeddings
 from .storage import Storage
 
@@ -33,8 +31,8 @@ _EXTRACTION_SYSTEM = (
     "they like to work. Do NOT remember transient task details, one-off questions, "
     "general knowledge, or anything about you (the assistant).\n\n"
     "Respond with ONLY a JSON array of concise self-contained fact strings written in "
-    "the third person about the user (e.g. [\"The user prefers Python\", \"The user is "
-    "building a personal AI assistant\"]). If nothing is worth saving, respond with []."
+    'the third person about the user (e.g. ["The user prefers Python", "The user is '
+    'building a personal AI assistant"]). If nothing is worth saving, respond with [].'
 )
 
 

@@ -10,7 +10,6 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Optional
 
 from .config import DB_PATH
 
@@ -94,9 +93,7 @@ class Storage:
 
     def conversation_exists(self, cid: str) -> bool:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT 1 FROM conversations WHERE id = ?", (cid,)
-            ).fetchone()
+            row = self._conn.execute("SELECT 1 FROM conversations WHERE id = ?", (cid,)).fetchone()
         return row is not None
 
     def list_conversations(self) -> list[dict]:
@@ -132,7 +129,7 @@ class Storage:
         conversation_id: str,
         role: str,
         content: str,
-        tool_name: Optional[str] = None,
+        tool_name: str | None = None,
     ) -> str:
         mid = uuid.uuid4().hex
         with self._lock:
@@ -180,8 +177,7 @@ class Storage:
         """Return memories without embedding bytes (for API/UI display)."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, content, source, created_at FROM memories "
-                "ORDER BY created_at DESC"
+                "SELECT id, content, source, created_at FROM memories ORDER BY created_at DESC"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -207,8 +203,16 @@ class Storage:
                 "INSERT INTO scheduled_tasks (id, title, prompt, schedule_kind, interval_sec, "
                 "time_of_day, enabled, last_run, next_run, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)",
-                (tid, title, prompt, schedule_kind, interval_sec, time_of_day,
-                 next_run, time.time()),
+                (
+                    tid,
+                    title,
+                    prompt,
+                    schedule_kind,
+                    interval_sec,
+                    time_of_day,
+                    next_run,
+                    time.time(),
+                ),
             )
             self._conn.commit()
         return tid

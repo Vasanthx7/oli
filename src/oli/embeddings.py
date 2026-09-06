@@ -47,9 +47,7 @@ class Embedder:
                     from fastembed import TextEmbedding
 
                     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                    self._model = TextEmbedding(
-                        model_name=MODEL_NAME, cache_dir=str(_CACHE_DIR)
-                    )
+                    self._model = TextEmbedding(model_name=MODEL_NAME, cache_dir=str(_CACHE_DIR))
         return self._model
 
     def embed_document(self, text: str) -> np.ndarray:

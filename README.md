@@ -19,7 +19,7 @@ Powered by [Groq](https://groq.com) (OpenAI-compatible API).
 
 ## Setup
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 # 1. Install dependencies
@@ -107,12 +107,42 @@ Three paths keep memory fresh:
 Manage what Oli knows from the **🧠 Memory** panel in the sidebar, or via
 `GET/POST/DELETE /api/memories`.
 
+## Development
+
+```bash
+uv sync --extra dev          # install app + dev tools
+uv run ruff check .          # lint
+uv run ruff format .         # format
+uv run mypy src/oli          # type-check
+uv run pytest                # tests (fully offline — no API key needed)
+uv run pre-commit install    # enable the pre-commit hooks
+```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs lint, format, type-check,
+and tests on every push and PR. Tests inject a dummy key and a throwaway database,
+so they never make network calls or touch real data.
+
+Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
+
 ## Roadmap
+
+**Feature-complete (prototype):**
 
 - [x] Chat brain: streaming, personality, history
 - [x] Tools: search, fetch, browse
 - [x] Long-term memory (local embeddings, auto-recall + remember/recall tools)
 - [x] Voice (Groq Whisper STT + browser speech synthesis, hands-free loop)
 - [x] Proactive/ambient (scheduler: daily/interval tasks → notifications)
-- [ ] VM deployment (Caddy + HTTPS + Tailscale)
-- [ ] Duplex realtime voice (barge-in) — needs a realtime provider
+
+**Productionization (in progress):**
+
+- [x] Phase A — Foundation: typed settings, structured logging, ruff/mypy, tests, CI, ADRs
+- [ ] Phase B — Migrate agent to LangGraph
+- [ ] Phase C — Postgres + pgvector + multi-tenant data model
+- [ ] Phase D — Auth & multi-user SaaS surface
+- [ ] Phase E — Background jobs (Arq + Redis)
+- [ ] Phase F — Docker + docker-compose
+- [ ] Phase G — CI/CD delivery (build → registry → deploy)
+- [ ] Phase H — Deploy (free-tier first) + Terraform IaC
+- [ ] Phase I — Observability (metrics, logs, tracing, alerts, backups)
+- [ ] Phase J — Portfolio polish

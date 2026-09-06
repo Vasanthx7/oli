@@ -13,17 +13,24 @@ from contextlib import asynccontextmanager
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from fastapi import FastAPI, File, HTTPException, UploadFile  # noqa: E402
+import uuid  # noqa: E402
+
+import structlog  # noqa: E402
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from . import config, memory  # noqa: E402
 from .agent import run_turn  # noqa: E402
+from .logging_config import configure_logging, get_logger  # noqa: E402
 from .memory import MemoryStore  # noqa: E402
 from .scheduler import Scheduler, initial_next_run  # noqa: E402
 from .storage import Storage  # noqa: E402
 from .stt import Transcriber  # noqa: E402
+
+configure_logging()
+log = get_logger(__name__)
 
 store = Storage()
 
@@ -37,17 +44,31 @@ scheduler = Scheduler(store)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    log.info("startup", environment=config.settings.environment, model=config.settings.groq_model)
     scheduler.start()
     try:
         yield
     finally:
         await scheduler.stop()
+        log.info("shutdown")
 
 
 app = FastAPI(title="Oli", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    """Bind a request id to the log context so every log line is traceable."""
+    request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:12])
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id, path=request.url.path)
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    return response
+
+
 # --- request models ------------------------------------------------------
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -59,6 +80,7 @@ class RenameRequest(BaseModel):
 
 
 # --- conversation endpoints ----------------------------------------------
+
 
 @app.get("/api/conversations")
 def list_conversations():
@@ -94,6 +116,7 @@ def delete_conversation(cid: str):
 
 # --- memory endpoints ----------------------------------------------------
 
+
 class MemoryRequest(BaseModel):
     content: str
 
@@ -117,6 +140,7 @@ def delete_memory(mid: str):
 
 # --- voice: speech-to-text ----------------------------------------------
 
+
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
     data = await audio.read()
@@ -127,10 +151,11 @@ async def transcribe(audio: UploadFile = File(...)):
         text = await transcriber.transcribe(data, filename=audio.filename or "audio.webm")
         return {"text": text}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
 
 
 # --- chat (SSE) ----------------------------------------------------------
+
 
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
@@ -172,6 +197,7 @@ async def chat(req: ChatRequest):
 
 # --- proactive: scheduled tasks -----------------------------------------
 
+
 class ScheduledTaskRequest(BaseModel):
     title: str
     prompt: str
@@ -190,9 +216,7 @@ def create_task(req: ScheduledTaskRequest):
     if req.schedule_kind not in ("interval", "daily"):
         raise HTTPException(status_code=400, detail="schedule_kind must be 'interval' or 'daily'")
     now = time.time()
-    next_run = initial_next_run(
-        req.schedule_kind, now, req.interval_sec, req.time_of_day
-    )
+    next_run = initial_next_run(req.schedule_kind, now, req.interval_sec, req.time_of_day)
     tid = store.add_scheduled_task(
         title=req.title,
         prompt=req.prompt,
@@ -229,6 +253,7 @@ def delete_task(tid: str):
 
 # --- proactive: notifications -------------------------------------------
 
+
 @app.get("/api/notifications")
 def list_notifications():
     return {
@@ -250,6 +275,7 @@ def delete_notification(nid: str):
 
 
 # --- static UI (mounted last so it doesn't shadow /api) -------------------
+
 
 @app.get("/")
 def index():
