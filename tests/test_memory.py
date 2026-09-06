@@ -3,25 +3,25 @@
 from oli.memory import MemoryStore, _parse_facts
 
 
-def test_remember_and_dedupe(storage):
+async def test_remember_and_dedupe(storage):
     ms = MemoryStore(storage)
-    assert ms.remember("The user has a golden retriever named Max")["stored"] is True
-    dup = ms.remember("The user owns a golden retriever called Max")
+    assert (await ms.remember("The user has a golden retriever named Max"))["stored"] is True
+    dup = await ms.remember("The user owns a golden retriever called Max")
     assert dup["stored"] is False
     assert dup["reason"] == "duplicate"
 
 
-def test_recall_relevance_and_threshold(storage):
+async def test_recall_relevance_and_threshold(storage):
     ms = MemoryStore(storage)
-    ms.remember("The user prefers Python for backend work")
-    ms.remember("The user is building a personal AI assistant")
+    await ms.remember("The user prefers Python for backend work")
+    await ms.remember("The user is building a personal AI assistant")
 
-    hits = ms.recall("which programming language do I like?")
+    hits = await ms.recall("which programming language do I like?")
     assert hits, "expected a relevant memory"
     assert "Python" in hits[0]["content"]
 
     # Unrelated query should return nothing above threshold.
-    assert ms.recall("what is the capital of France?") == []
+    assert await ms.recall("what is the capital of France?") == []
 
 
 def test_parse_facts_shapes():

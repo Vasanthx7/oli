@@ -52,11 +52,18 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # --- Storage ---
-    db_path: Path = DATA_DIR / "oli.db"
+    # SQLite for local dev/test/CI; set to a postgresql+asyncpg:// URL in production.
+    database_url: str = ""
 
     def model_post_init(self, __context: object) -> None:
         if not self.browser_model:
             self.browser_model = self.groq_model
+        if not self.database_url:
+            self.database_url = f"sqlite+aiosqlite:///{(DATA_DIR / 'oli.db').as_posix()}"
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.database_url.startswith("postgresql")
 
     def require_api_key(self) -> str:
         """Return the LLM API key or raise a clear error if it is missing."""
@@ -77,7 +84,7 @@ BROWSER_MODEL = settings.browser_model
 STT_MODEL = settings.stt_model
 HOST = settings.host
 PORT = settings.port
-DB_PATH = settings.db_path
+DATABASE_URL = settings.database_url
 
 
 def require_api_key() -> str:

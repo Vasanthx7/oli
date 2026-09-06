@@ -8,12 +8,11 @@ import asyncio
 import json
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-import uuid  # noqa: E402
 
 import structlog  # noqa: E402
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
@@ -23,6 +22,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from . import config, memory  # noqa: E402
 from .agent import run_turn  # noqa: E402
+from .db import dispose_engine, init_models  # noqa: E402
 from .logging_config import configure_logging, get_logger  # noqa: E402
 from .memory import MemoryStore  # noqa: E402
 from .scheduler import Scheduler, initial_next_run  # noqa: E402
@@ -34,7 +34,7 @@ log = get_logger(__name__)
 
 store = Storage()
 
-# Long-term memory shares the same SQLite store; register it so tools can reach it.
+# Long-term memory shares the same store; register it so tools can reach it.
 memory_store = MemoryStore(store)
 memory.set_active(memory_store)
 
@@ -44,12 +44,16 @@ scheduler = Scheduler(store)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # On SQLite (dev/test) create tables directly; production uses Alembic migrations.
+    if not config.settings.is_postgres:
+        await init_models()
     log.info("startup", environment=config.settings.environment, model=config.settings.groq_model)
     scheduler.start()
     try:
         yield
     finally:
         await scheduler.stop()
+        await dispose_engine()
         log.info("shutdown")
 
 
@@ -79,62 +83,69 @@ class RenameRequest(BaseModel):
     title: str
 
 
+class MemoryRequest(BaseModel):
+    content: str
+
+
+class ScheduledTaskRequest(BaseModel):
+    title: str
+    prompt: str
+    schedule_kind: str  # 'interval' | 'daily'
+    interval_sec: int | None = None
+    time_of_day: str | None = None  # 'HH:MM'
+
+
 # --- conversation endpoints ----------------------------------------------
 
 
 @app.get("/api/conversations")
-def list_conversations():
-    return store.list_conversations()
+async def list_conversations():
+    return await store.list_conversations()
 
 
 @app.post("/api/conversations")
-def create_conversation():
-    cid = store.create_conversation()
+async def create_conversation():
+    cid = await store.create_conversation()
     return {"id": cid, "title": "New chat"}
 
 
 @app.get("/api/conversations/{cid}")
-def get_conversation(cid: str):
-    if not store.conversation_exists(cid):
+async def get_conversation(cid: str):
+    if not await store.conversation_exists(cid):
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return {"id": cid, "messages": store.get_messages(cid)}
+    return {"id": cid, "messages": await store.get_messages(cid)}
 
 
 @app.patch("/api/conversations/{cid}")
-def rename_conversation(cid: str, req: RenameRequest):
-    if not store.conversation_exists(cid):
+async def rename_conversation(cid: str, req: RenameRequest):
+    if not await store.conversation_exists(cid):
         raise HTTPException(status_code=404, detail="Conversation not found")
-    store.rename_conversation(cid, req.title)
+    await store.rename_conversation(cid, req.title)
     return {"ok": True}
 
 
 @app.delete("/api/conversations/{cid}")
-def delete_conversation(cid: str):
-    store.delete_conversation(cid)
+async def delete_conversation(cid: str):
+    await store.delete_conversation(cid)
     return {"ok": True}
 
 
 # --- memory endpoints ----------------------------------------------------
 
 
-class MemoryRequest(BaseModel):
-    content: str
-
-
 @app.get("/api/memories")
-def list_memories():
-    return store.list_memories()
+async def list_memories():
+    return await store.list_memories()
 
 
 @app.post("/api/memories")
-def add_memory(req: MemoryRequest):
-    result = memory_store.remember(req.content, source="explicit")
-    return result
+async def add_memory(req: MemoryRequest):
+    return await memory_store.remember(req.content, source="explicit")
 
 
 @app.delete("/api/memories/{mid}")
-def delete_memory(mid: str):
-    store.delete_memory(mid)
+async def delete_memory(mid: str):
+    await store.delete_memory(mid)
     return {"ok": True}
 
 
@@ -169,17 +180,16 @@ async def chat(req: ChatRequest):
 
     # Create a conversation on the fly if none was supplied.
     cid = req.conversation_id
-    if not cid or not store.conversation_exists(cid):
-        cid = store.create_conversation()
+    if not cid or not await store.conversation_exists(cid):
+        cid = await store.create_conversation()
 
     # Auto-title a fresh conversation from its first user message.
-    existing = store.get_messages(cid)
+    existing = await store.get_messages(cid)
     if not existing:
         title = message[:60] + ("…" if len(message) > 60 else "")
-        store.rename_conversation(cid, title)
+        await store.rename_conversation(cid, title)
 
     async def event_stream():
-        # Tell the client which conversation this stream belongs to.
         yield _sse({"type": "meta", "conversation_id": cid})
         try:
             async for event in run_turn(store, cid, message):
@@ -198,26 +208,18 @@ async def chat(req: ChatRequest):
 # --- proactive: scheduled tasks -----------------------------------------
 
 
-class ScheduledTaskRequest(BaseModel):
-    title: str
-    prompt: str
-    schedule_kind: str  # 'interval' | 'daily'
-    interval_sec: int | None = None
-    time_of_day: str | None = None  # 'HH:MM'
-
-
 @app.get("/api/tasks")
-def list_tasks():
-    return store.list_scheduled_tasks()
+async def list_tasks():
+    return await store.list_scheduled_tasks()
 
 
 @app.post("/api/tasks")
-def create_task(req: ScheduledTaskRequest):
+async def create_task(req: ScheduledTaskRequest):
     if req.schedule_kind not in ("interval", "daily"):
         raise HTTPException(status_code=400, detail="schedule_kind must be 'interval' or 'daily'")
     now = time.time()
     next_run = initial_next_run(req.schedule_kind, now, req.interval_sec, req.time_of_day)
-    tid = store.add_scheduled_task(
+    tid = await store.add_scheduled_task(
         title=req.title,
         prompt=req.prompt,
         schedule_kind=req.schedule_kind,
@@ -229,25 +231,24 @@ def create_task(req: ScheduledTaskRequest):
 
 
 @app.post("/api/tasks/{tid}/toggle")
-def toggle_task(tid: str, enabled: bool):
-    if not store.get_scheduled_task(tid):
+async def toggle_task(tid: str, enabled: bool):
+    if not await store.get_scheduled_task(tid):
         raise HTTPException(status_code=404, detail="Task not found")
-    store.set_task_enabled(tid, enabled)
+    await store.set_task_enabled(tid, enabled)
     return {"ok": True}
 
 
 @app.post("/api/tasks/{tid}/run")
 async def run_task_now(tid: str):
-    task = store.get_scheduled_task(tid)
+    task = await store.get_scheduled_task(tid)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    result = await scheduler.run_task(task, scheduled=False)
-    return result
+    return await scheduler.run_task(task, scheduled=False)
 
 
 @app.delete("/api/tasks/{tid}")
-def delete_task(tid: str):
-    store.delete_scheduled_task(tid)
+async def delete_task(tid: str):
+    await store.delete_scheduled_task(tid)
     return {"ok": True}
 
 
@@ -255,22 +256,22 @@ def delete_task(tid: str):
 
 
 @app.get("/api/notifications")
-def list_notifications():
+async def list_notifications():
     return {
-        "unread": store.unread_count(),
-        "items": store.list_notifications(),
+        "unread": await store.unread_count(),
+        "items": await store.list_notifications(),
     }
 
 
 @app.post("/api/notifications/read")
-def mark_read():
-    store.mark_notifications_read()
+async def mark_read():
+    await store.mark_notifications_read()
     return {"ok": True}
 
 
 @app.delete("/api/notifications/{nid}")
-def delete_notification(nid: str):
-    store.delete_notification(nid)
+async def delete_notification(nid: str):
+    await store.delete_notification(nid)
     return {"ok": True}
 
 

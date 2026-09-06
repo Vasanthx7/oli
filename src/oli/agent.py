@@ -76,8 +76,8 @@ async def run_turn(
     user_message: str,
 ) -> AsyncGenerator[dict, None]:
     """Run one full user turn, yielding events. Persists user + assistant + tool messages."""
-    store.add_message(conversation_id, "user", user_message)
-    seed = _history_to_lc(store.get_messages(conversation_id))
+    await store.add_message(conversation_id, "user", user_message)
+    seed = _history_to_lc(await store.get_messages(conversation_id))
 
     graph = get_graph()
     final_content = ""
@@ -111,7 +111,7 @@ async def run_turn(
             elif kind == "on_tool_end":
                 output = event["data"].get("output")
                 result = _text(getattr(output, "content", output))
-                store.add_message(conversation_id, "tool", result, tool_name=event["name"])
+                await store.add_message(conversation_id, "tool", result, tool_name=event["name"])
                 yield {
                     "type": "tool_end",
                     "name": event["name"],
@@ -126,7 +126,7 @@ async def run_turn(
         yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
         return
 
-    store.add_message(conversation_id, "assistant", final_content)
+    await store.add_message(conversation_id, "assistant", final_content)
     _spawn_extraction(conversation_id, user_message, final_content)
     yield {"type": "done", "content": final_content}
 

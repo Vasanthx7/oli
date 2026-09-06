@@ -15,7 +15,7 @@ Powered by [Groq](https://groq.com) (OpenAI-compatible API).
 - **LLM:** Groq (`gpt-oss-120b` by default) via a provider-agnostic OpenAI-compatible client, swappable via env
 - **Browsing:** browser-use (headless Chromium)
 - **Search / fetch:** ddgs + httpx + trafilatura
-- **Storage:** SQLite (conversations + messages)
+- **Storage:** async SQLAlchemy — SQLite for dev/test, PostgreSQL + pgvector for production (Alembic migrations)
 - **Frontend:** static HTML/JS chat UI with SSE streaming
 
 ## Setup
@@ -123,6 +123,21 @@ CI (GitHub Actions, `.github/workflows/ci.yml`) runs lint, format, type-check,
 and tests on every push and PR. Tests inject a dummy key and a throwaway database,
 so they never make network calls or touch real data.
 
+### Database
+
+By default the app uses a local SQLite file — no setup needed. For a
+production-like Postgres (with pgvector):
+
+```bash
+docker compose up -d db                                        # start Postgres
+export DATABASE_URL=postgresql+asyncpg://oli:oli@localhost:5432/oli
+uv run alembic upgrade head                                    # apply migrations
+uv run uvicorn oli.main:app --reload
+```
+
+Migrations live in `alembic/`. Create one after changing `models.py` with
+`uv run alembic revision --autogenerate -m "describe change"`.
+
 Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 
 ## Roadmap
@@ -139,8 +154,8 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 
 - [x] Phase A — Foundation: typed settings, structured logging, ruff/mypy, tests, CI, ADRs
 - [x] Phase B — Agent migrated to LangGraph (StateGraph + ToolNode, streaming via astream_events)
-- [ ] Phase C — Postgres + pgvector + multi-tenant data model
-- [ ] Phase D — Auth & multi-user SaaS surface
+- [x] Phase C — Async SQLAlchemy + Alembic migrations, Postgres-ready (SQLite dev / Postgres+pgvector prod), docker-compose
+- [ ] Phase D — Auth & multi-user SaaS surface (per-user data isolation)
 - [ ] Phase E — Background jobs (Arq + Redis)
 - [ ] Phase F — Docker + docker-compose
 - [ ] Phase G — CI/CD delivery (build → registry → deploy)

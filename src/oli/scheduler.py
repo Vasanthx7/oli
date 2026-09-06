@@ -99,18 +99,18 @@ class Scheduler:
         import time
 
         now = time.time()
-        for task in self._store.get_due_tasks(now):
+        for task in await self._store.get_due_tasks(now):
             await self.run_task(task, scheduled=True)
 
     async def run_task(self, task: dict, scheduled: bool = False) -> dict:
         """Execute one scheduled task now, record a notification, advance its schedule."""
         import time
 
-        conv_id = self._ensure_conversation(task)
+        conv_id = await self._ensure_conversation(task)
         started = time.time()
         try:
             answer = await run_once(self._store, conv_id, task["prompt"])
-            self._store.add_notification(
+            await self._store.add_notification(
                 title=task["title"],
                 content=answer or "(no output)",
                 task_id=task["id"],
@@ -118,7 +118,7 @@ class Scheduler:
             )
             result = {"status": "ok", "content": answer}
         except Exception as e:  # noqa: BLE001
-            self._store.add_notification(
+            await self._store.add_notification(
                 title=task["title"],
                 content=f"Task failed: {type(e).__name__}: {e}",
                 task_id=task["id"],
@@ -133,21 +133,11 @@ class Scheduler:
                 task.get("interval_sec"),
                 task.get("time_of_day"),
             )
-            self._store.update_task_schedule(task["id"], started, nxt)
+            await self._store.update_task_schedule(task["id"], started, nxt)
         return result
 
-    def _ensure_conversation(self, task: dict) -> str:
+    async def _ensure_conversation(self, task: dict) -> str:
         """Give each scheduled task a stable conversation so its runs share context."""
         conv_id = f"task-{task['id']}"
-        if not self._store.conversation_exists(conv_id):
-            # create_conversation generates its own id, so insert directly with our id.
-            import time
-
-            with self._store._lock:  # reuse the store's lock for a direct insert
-                self._store._conn.execute(
-                    "INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (conv_id, _CONV_TITLE.format(title=task["title"]), time.time(), time.time()),
-                )
-                self._store._conn.commit()
+        await self._store.ensure_conversation(conv_id, _CONV_TITLE.format(title=task["title"]))
         return conv_id

@@ -43,7 +43,7 @@ def build_model() -> ChatOpenAI:
     )
 
 
-def _recall_block(state_messages: list) -> str | None:
+async def _recall_block(state_messages: list) -> str | None:
     """Build a system block of memories relevant to the latest user message."""
     mem = memory.active()
     if mem is None:
@@ -52,7 +52,7 @@ def _recall_block(state_messages: list) -> str | None:
     if last_human is None:
         return None
     try:
-        hits = mem.recall(str(last_human.content))
+        hits = await mem.recall(str(last_human.content))
     except Exception:
         return None
     if not hits:
@@ -83,7 +83,7 @@ def _build():
     async def agent_node(state: State) -> dict:
         # System prompt + recalled memories are prepended per call, not stored in state.
         prompt: list = [SystemMessage(content=system_prompt())]
-        recall = _recall_block(state["messages"])
+        recall = await _recall_block(state["messages"])
         if recall:
             prompt.append(SystemMessage(content=recall))
         prompt.extend(state["messages"])

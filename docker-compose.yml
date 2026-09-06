@@ -1,0 +1,27 @@
+# Local development services. Start Postgres with:
+#   docker compose up -d db
+# then point the app at it:
+#   DATABASE_URL=postgresql+asyncpg://oli:oli@localhost:5432/oli
+#   uv run alembic upgrade head
+# (The app container is added in a later phase.)
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: oli
+      POSTGRES_PASSWORD: oli
+      POSTGRES_DB: oli
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oli -d oli"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

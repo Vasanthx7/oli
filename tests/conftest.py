@@ -1,9 +1,9 @@
 """Shared test fixtures.
 
-Isolation strategy: point the app at a throwaway SQLite file and inject a dummy
-API key *before* any `oli` module is imported, so tests never touch the real DB
-or make real network calls. os.environ takes precedence over the .env file in
-pydantic-settings, so this cleanly overrides local dev config.
+Isolation: point the app at a throwaway SQLite file and inject a dummy API key
+*before* any oli.* module is imported, so tests never touch real data or make
+network calls. Each test gets freshly-created tables and a fresh async engine
+(disposed after the test) to avoid cross-event-loop reuse.
 """
 
 import os
@@ -13,36 +13,39 @@ from pathlib import Path
 
 # --- must run before importing any oli.* module ---
 _TEST_DB = Path(tempfile.gettempdir()) / f"oli_test_{uuid.uuid4().hex}.db"
-os.environ["DB_PATH"] = str(_TEST_DB)
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
 os.environ["GROQ_API_KEY"] = "test-key-not-real"
 os.environ["ENVIRONMENT"] = "test"
 
-import pytest  # noqa: E402
+import httpx  # noqa: E402
+import pytest_asyncio  # noqa: E402
 
+from oli import db  # noqa: E402
+from oli.models import Base  # noqa: E402
 from oli.storage import Storage  # noqa: E402
 
 
-@pytest.fixture
-def storage(tmp_path) -> Storage:
-    """A fresh, isolated Storage backed by a per-test temp DB file."""
-    db = tmp_path / "unit.db"
-    s = Storage(db)
-    yield s
-    s.close()
+@pytest_asyncio.fixture(autouse=True)
+async def _fresh_db():
+    """Recreate all tables per test, then dispose the engine (fresh per event loop)."""
+    engine = db.get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    await db.dispose_engine()
 
 
-@pytest.fixture
-def client():
-    """FastAPI TestClient with a clean database per test."""
-    from fastapi.testclient import TestClient
+@pytest_asyncio.fixture
+async def storage() -> Storage:
+    return Storage()
 
+
+@pytest_asyncio.fixture
+async def client():
+    """Async HTTP client bound to the ASGI app, sharing the test's event loop."""
     from oli import main
 
-    # Wipe all tables so each test starts clean (shared app-level store).
-    with main.store._lock:
-        for table in ("notifications", "scheduled_tasks", "memories", "messages", "conversations"):
-            main.store._conn.execute(f"DELETE FROM {table}")
-        main.store._conn.commit()
-
-    with TestClient(main.app) as c:
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

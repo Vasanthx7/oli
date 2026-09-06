@@ -43,37 +43,38 @@ class MemoryStore:
 
     # --- write ----------------------------------------------------------
 
-    def remember(self, content: str, source: str = "explicit") -> dict:
+    async def remember(self, content: str, source: str = "explicit") -> dict:
         """Embed and store a fact, unless a near-duplicate already exists."""
         content = content.strip()
         if not content:
             return {"stored": False, "reason": "empty"}
 
-        vec = self._embedder.embed_document(content)
+        # Embedding is CPU-bound; run it off the event loop.
+        vec = await asyncio.to_thread(self._embedder.embed_document, content)
 
         # Dedupe against existing memories.
-        for mem in self._store.get_memories():
+        for mem in await self._store.get_memories():
             existing = embeddings.from_blob(mem["embedding"])
             if embeddings.cosine(vec, existing) >= DEDUPE_THRESHOLD:
                 return {"stored": False, "reason": "duplicate", "of": mem["content"]}
 
-        mid = self._store.add_memory(content, embeddings.to_blob(vec), source)
+        mid = await self._store.add_memory(content, embeddings.to_blob(vec), source)
         return {"stored": True, "id": mid, "content": content}
 
     # --- read -----------------------------------------------------------
 
-    def recall(
+    async def recall(
         self, query: str, k: int = RECALL_TOP_K, threshold: float = RECALL_THRESHOLD
     ) -> list[dict]:
         """Return up to k memories most similar to the query, above threshold."""
         query = query.strip()
         if not query:
             return []
-        memories = self._store.get_memories()
+        memories = await self._store.get_memories()
         if not memories:
             return []
 
-        qvec = self._embedder.embed_query(query)
+        qvec = await asyncio.to_thread(self._embedder.embed_query, query)
         scored = []
         for mem in memories:
             vec = embeddings.from_blob(mem["embedding"])
@@ -101,8 +102,7 @@ class MemoryStore:
 
         stored = []
         for fact in facts:
-            # Storage/embedding is blocking; keep the event loop free.
-            result = await asyncio.to_thread(self.remember, fact, "auto")
+            result = await self.remember(fact, "auto")
             if result.get("stored"):
                 stored.append(fact)
         return stored

@@ -5,8 +5,6 @@ recall still happens every turn in the agent loop; these give the model direct
 control when the user says "remember that..." or asks "what do you know about me?".
 """
 
-import asyncio
-
 from .. import memory
 
 
@@ -14,7 +12,7 @@ async def remember(content: str) -> str:
     store = memory.active()
     if store is None:
         return "Memory is not available."
-    result = await asyncio.to_thread(store.remember, content, "explicit")
+    result = await store.remember(content, "explicit")
     if result.get("stored"):
         return f"Saved to memory: {result['content']}"
     if result.get("reason") == "duplicate":
@@ -26,7 +24,7 @@ async def recall_memory(query: str) -> str:
     store = memory.active()
     if store is None:
         return "Memory is not available."
-    hits = await asyncio.to_thread(store.recall, query)
+    hits = await store.recall(query)
     if not hits:
         return "No relevant memories found."
     return "Relevant memories:\n" + "\n".join(f"- {h['content']}" for h in hits)

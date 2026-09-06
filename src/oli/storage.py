@@ -1,194 +1,179 @@
-"""SQLite persistence for conversations and messages.
+"""Async data-access layer (repository) over SQLAlchemy.
 
-One database file (data/assistant.db). A single connection is shared across the
-async app with a lock, since SQLite writes must be serialized. Message content
-is stored as-is; tool activity is recorded as messages with role='tool' so the
-full turn can be replayed.
+Keeps the same method names and dict-returning shape the rest of the app already
+uses, but every method is now async and backed by SQLAlchemy — so the same code
+runs on SQLite (dev/test) and PostgreSQL (production) by swapping DATABASE_URL.
 """
 
-import sqlite3
-import threading
 import time
 import uuid
 
-from .config import DB_PATH
+from sqlalchemy import delete, func, select, update
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS conversations (
-    id         TEXT PRIMARY KEY,
-    title      TEXT NOT NULL DEFAULT 'New chat',
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
-);
+from .db import get_sessionmaker
+from .models import Conversation, Memory, Message, Notification, ScheduledTask
 
-CREATE TABLE IF NOT EXISTS messages (
-    id              TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    role            TEXT NOT NULL,            -- 'user' | 'assistant' | 'tool'
-    content         TEXT NOT NULL DEFAULT '',
-    tool_name       TEXT,                     -- set when role='tool'
-    created_at      REAL NOT NULL
-);
 
-CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
+def _conversation_dict(c: Conversation) -> dict:
+    return {"id": c.id, "title": c.title, "created_at": c.created_at, "updated_at": c.updated_at}
 
-CREATE TABLE IF NOT EXISTS memories (
-    id         TEXT PRIMARY KEY,
-    content    TEXT NOT NULL,
-    embedding  BLOB NOT NULL,            -- float32 vector bytes
-    source     TEXT NOT NULL DEFAULT 'auto',  -- 'auto' | 'explicit'
-    created_at REAL NOT NULL
-);
 
-CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+def _message_dict(m: Message) -> dict:
+    return {
+        "id": m.id,
+        "role": m.role,
+        "content": m.content,
+        "tool_name": m.tool_name,
+        "created_at": m.created_at,
+    }
 
-CREATE TABLE IF NOT EXISTS scheduled_tasks (
-    id            TEXT PRIMARY KEY,
-    title         TEXT NOT NULL,
-    prompt        TEXT NOT NULL,
-    schedule_kind TEXT NOT NULL,            -- 'interval' | 'daily'
-    interval_sec  INTEGER,                  -- for 'interval'
-    time_of_day   TEXT,                     -- 'HH:MM' local, for 'daily'
-    enabled       INTEGER NOT NULL DEFAULT 1,
-    last_run      REAL,
-    next_run      REAL NOT NULL,
-    created_at    REAL NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS notifications (
-    id         TEXT PRIMARY KEY,
-    task_id    TEXT,
-    title      TEXT NOT NULL,
-    content    TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'ok',  -- 'ok' | 'error'
-    read       INTEGER NOT NULL DEFAULT 0,
-    created_at REAL NOT NULL
-);
+def _task_dict(t: ScheduledTask) -> dict:
+    return {
+        "id": t.id,
+        "title": t.title,
+        "prompt": t.prompt,
+        "schedule_kind": t.schedule_kind,
+        "interval_sec": t.interval_sec,
+        "time_of_day": t.time_of_day,
+        "enabled": int(t.enabled),
+        "last_run": t.last_run,
+        "next_run": t.next_run,
+        "created_at": t.created_at,
+    }
 
-CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
-"""
+
+def _notification_dict(n: Notification) -> dict:
+    return {
+        "id": n.id,
+        "task_id": n.task_id,
+        "title": n.title,
+        "content": n.content,
+        "status": n.status,
+        "read": int(n.read),
+        "created_at": n.created_at,
+    }
 
 
 class Storage:
-    def __init__(self, db_path=DB_PATH):
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.executescript(_SCHEMA)
-        self._conn.commit()
-        self._lock = threading.Lock()
+    """Async repository. Resolves the sessionmaker lazily per call so it always
+    uses the current engine (important for tests that recreate the engine)."""
+
+    @property
+    def _sm(self):
+        return get_sessionmaker()
 
     # --- conversations ---------------------------------------------------
 
-    def create_conversation(self, title: str = "New chat") -> str:
-        cid = uuid.uuid4().hex
-        now = time.time()
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (cid, title, now, now),
+    async def create_conversation(self, title: str = "New chat") -> str:
+        async with self._sm() as s:
+            conv = Conversation(id=uuid.uuid4().hex, title=title)
+            s.add(conv)
+            await s.commit()
+            return conv.id
+
+    async def ensure_conversation(self, cid: str, title: str) -> str:
+        """Create a conversation with a specific id if it doesn't already exist."""
+        async with self._sm() as s:
+            existing = await s.get(Conversation, cid)
+            if existing is None:
+                s.add(Conversation(id=cid, title=title))
+                await s.commit()
+            return cid
+
+    async def conversation_exists(self, cid: str) -> bool:
+        async with self._sm() as s:
+            return await s.get(Conversation, cid) is not None
+
+    async def list_conversations(self) -> list[dict]:
+        async with self._sm() as s:
+            rows = (
+                await s.execute(select(Conversation).order_by(Conversation.updated_at.desc()))
+            ).scalars()
+            return [_conversation_dict(c) for c in rows]
+
+    async def rename_conversation(self, cid: str, title: str) -> None:
+        async with self._sm() as s:
+            await s.execute(
+                update(Conversation)
+                .where(Conversation.id == cid)
+                .values(title=title, updated_at=time.time())
             )
-            self._conn.commit()
-        return cid
+            await s.commit()
 
-    def conversation_exists(self, cid: str) -> bool:
-        with self._lock:
-            row = self._conn.execute("SELECT 1 FROM conversations WHERE id = ?", (cid,)).fetchone()
-        return row is not None
-
-    def list_conversations(self) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, title, created_at, updated_at FROM conversations "
-                "ORDER BY updated_at DESC"
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def rename_conversation(self, cid: str, title: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-                (title, time.time(), cid),
-            )
-            self._conn.commit()
-
-    def delete_conversation(self, cid: str) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
-            self._conn.commit()
-
-    def _touch(self, cid: str) -> None:
-        self._conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?", (time.time(), cid)
-        )
+    async def delete_conversation(self, cid: str) -> None:
+        async with self._sm() as s:
+            await s.execute(delete(Conversation).where(Conversation.id == cid))
+            await s.commit()
 
     # --- messages --------------------------------------------------------
 
-    def add_message(
-        self,
-        conversation_id: str,
-        role: str,
-        content: str,
-        tool_name: str | None = None,
+    async def add_message(
+        self, conversation_id: str, role: str, content: str, tool_name: str | None = None
     ) -> str:
-        mid = uuid.uuid4().hex
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO messages (id, conversation_id, role, content, tool_name, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (mid, conversation_id, role, content, tool_name, time.time()),
+        async with self._sm() as s:
+            msg = Message(
+                id=uuid.uuid4().hex,
+                conversation_id=conversation_id,
+                role=role,
+                content=content,
+                tool_name=tool_name,
             )
-            self._touch(conversation_id)
-            self._conn.commit()
-        return mid
+            s.add(msg)
+            await s.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation_id)
+                .values(updated_at=time.time())
+            )
+            await s.commit()
+            return msg.id
 
-    def get_messages(self, conversation_id: str) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, role, content, tool_name, created_at FROM messages "
-                "WHERE conversation_id = ? ORDER BY created_at ASC",
-                (conversation_id,),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    async def get_messages(self, conversation_id: str) -> list[dict]:
+        async with self._sm() as s:
+            rows = (
+                await s.execute(
+                    select(Message)
+                    .where(Message.conversation_id == conversation_id)
+                    .order_by(Message.created_at.asc())
+                )
+            ).scalars()
+            return [_message_dict(m) for m in rows]
 
     # --- memories --------------------------------------------------------
 
-    def add_memory(self, content: str, embedding: bytes, source: str = "auto") -> str:
-        mid = uuid.uuid4().hex
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO memories (id, content, embedding, source, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (mid, content, embedding, source, time.time()),
-            )
-            self._conn.commit()
-        return mid
+    async def add_memory(self, content: str, embedding: bytes, source: str = "auto") -> str:
+        async with self._sm() as s:
+            mem = Memory(id=uuid.uuid4().hex, content=content, embedding=embedding, source=source)
+            s.add(mem)
+            await s.commit()
+            return mem.id
 
-    def get_memories(self) -> list[dict]:
-        """Return all memories including raw embedding bytes (for similarity search)."""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, content, embedding, source, created_at FROM memories "
-                "ORDER BY created_at DESC"
-            ).fetchall()
-        return [dict(r) for r in rows]
+    async def get_memories(self) -> list[dict]:
+        """All memories including raw embedding bytes (for similarity search)."""
+        async with self._sm() as s:
+            rows = (await s.execute(select(Memory).order_by(Memory.created_at.desc()))).scalars()
+            return [
+                {"id": m.id, "content": m.content, "embedding": m.embedding, "source": m.source}
+                for m in rows
+            ]
 
-    def list_memories(self) -> list[dict]:
-        """Return memories without embedding bytes (for API/UI display)."""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, content, source, created_at FROM memories ORDER BY created_at DESC"
-            ).fetchall()
-        return [dict(r) for r in rows]
+    async def list_memories(self) -> list[dict]:
+        """Memories without embedding bytes (for API/UI display)."""
+        async with self._sm() as s:
+            rows = (await s.execute(select(Memory).order_by(Memory.created_at.desc()))).scalars()
+            return [
+                {"id": m.id, "content": m.content, "source": m.source, "created_at": m.created_at}
+                for m in rows
+            ]
 
-    def delete_memory(self, mid: str) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
-            self._conn.commit()
+    async def delete_memory(self, mid: str) -> None:
+        async with self._sm() as s:
+            await s.execute(delete(Memory).where(Memory.id == mid))
+            await s.commit()
 
     # --- scheduled tasks -------------------------------------------------
 
-    def add_scheduled_task(
+    async def add_scheduled_task(
         self,
         title: str,
         prompt: str,
@@ -197,108 +182,102 @@ class Storage:
         interval_sec: int | None = None,
         time_of_day: str | None = None,
     ) -> str:
-        tid = uuid.uuid4().hex
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO scheduled_tasks (id, title, prompt, schedule_kind, interval_sec, "
-                "time_of_day, enabled, last_run, next_run, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)",
-                (
-                    tid,
-                    title,
-                    prompt,
-                    schedule_kind,
-                    interval_sec,
-                    time_of_day,
-                    next_run,
-                    time.time(),
-                ),
+        async with self._sm() as s:
+            task = ScheduledTask(
+                id=uuid.uuid4().hex,
+                title=title,
+                prompt=prompt,
+                schedule_kind=schedule_kind,
+                interval_sec=interval_sec,
+                time_of_day=time_of_day,
+                enabled=1,
+                next_run=next_run,
             )
-            self._conn.commit()
-        return tid
+            s.add(task)
+            await s.commit()
+            return task.id
 
-    def list_scheduled_tasks(self) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM scheduled_tasks ORDER BY created_at DESC"
-            ).fetchall()
-        return [dict(r) for r in rows]
+    async def list_scheduled_tasks(self) -> list[dict]:
+        async with self._sm() as s:
+            rows = (
+                await s.execute(select(ScheduledTask).order_by(ScheduledTask.created_at.desc()))
+            ).scalars()
+            return [_task_dict(t) for t in rows]
 
-    def get_scheduled_task(self, tid: str) -> dict | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM scheduled_tasks WHERE id = ?", (tid,)
-            ).fetchone()
-        return dict(row) if row else None
+    async def get_scheduled_task(self, tid: str) -> dict | None:
+        async with self._sm() as s:
+            t = await s.get(ScheduledTask, tid)
+            return _task_dict(t) if t else None
 
-    def get_due_tasks(self, now: float) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run <= ?",
-                (now,),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    async def get_due_tasks(self, now: float) -> list[dict]:
+        async with self._sm() as s:
+            rows = (
+                await s.execute(
+                    select(ScheduledTask).where(
+                        ScheduledTask.enabled == 1, ScheduledTask.next_run <= now
+                    )
+                )
+            ).scalars()
+            return [_task_dict(t) for t in rows]
 
-    def update_task_schedule(self, tid: str, last_run: float, next_run: float) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE scheduled_tasks SET last_run = ?, next_run = ? WHERE id = ?",
-                (last_run, next_run, tid),
+    async def update_task_schedule(self, tid: str, last_run: float, next_run: float) -> None:
+        async with self._sm() as s:
+            await s.execute(
+                update(ScheduledTask)
+                .where(ScheduledTask.id == tid)
+                .values(last_run=last_run, next_run=next_run)
             )
-            self._conn.commit()
+            await s.commit()
 
-    def set_task_enabled(self, tid: str, enabled: bool) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE scheduled_tasks SET enabled = ? WHERE id = ?",
-                (1 if enabled else 0, tid),
+    async def set_task_enabled(self, tid: str, enabled: bool) -> None:
+        async with self._sm() as s:
+            await s.execute(
+                update(ScheduledTask)
+                .where(ScheduledTask.id == tid)
+                .values(enabled=1 if enabled else 0)
             )
-            self._conn.commit()
+            await s.commit()
 
-    def delete_scheduled_task(self, tid: str) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (tid,))
-            self._conn.commit()
+    async def delete_scheduled_task(self, tid: str) -> None:
+        async with self._sm() as s:
+            await s.execute(delete(ScheduledTask).where(ScheduledTask.id == tid))
+            await s.commit()
 
     # --- notifications ---------------------------------------------------
 
-    def add_notification(
+    async def add_notification(
         self, title: str, content: str, task_id: str | None = None, status: str = "ok"
     ) -> str:
-        nid = uuid.uuid4().hex
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO notifications (id, task_id, title, content, status, read, created_at) "
-                "VALUES (?, ?, ?, ?, ?, 0, ?)",
-                (nid, task_id, title, content, status, time.time()),
+        async with self._sm() as s:
+            n = Notification(
+                id=uuid.uuid4().hex, task_id=task_id, title=title, content=content, status=status
             )
-            self._conn.commit()
-        return nid
+            s.add(n)
+            await s.commit()
+            return n.id
 
-    def list_notifications(self, limit: int = 50) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [dict(r) for r in rows]
+    async def list_notifications(self, limit: int = 50) -> list[dict]:
+        async with self._sm() as s:
+            rows = (
+                await s.execute(
+                    select(Notification).order_by(Notification.created_at.desc()).limit(limit)
+                )
+            ).scalars()
+            return [_notification_dict(n) for n in rows]
 
-    def unread_count(self) -> int:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS c FROM notifications WHERE read = 0"
-            ).fetchone()
-        return int(row["c"])
+    async def unread_count(self) -> int:
+        async with self._sm() as s:
+            count = await s.scalar(
+                select(func.count()).select_from(Notification).where(Notification.read == 0)
+            )
+            return int(count or 0)
 
-    def mark_notifications_read(self) -> None:
-        with self._lock:
-            self._conn.execute("UPDATE notifications SET read = 1 WHERE read = 0")
-            self._conn.commit()
+    async def mark_notifications_read(self) -> None:
+        async with self._sm() as s:
+            await s.execute(update(Notification).where(Notification.read == 0).values(read=1))
+            await s.commit()
 
-    def delete_notification(self, nid: str) -> None:
-        with self._lock:
-            self._conn.execute("DELETE FROM notifications WHERE id = ?", (nid,))
-            self._conn.commit()
-
-    def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+    async def delete_notification(self, nid: str) -> None:
+        async with self._sm() as s:
+            await s.execute(delete(Notification).where(Notification.id == nid))
+            await s.commit()
