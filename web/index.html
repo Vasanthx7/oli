@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Oli — Personal Assistant</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <span class="brand">✦ Oli</span>
+        <div class="head-actions">
+          <button id="bell-btn" title="Notifications">🔔<span id="bell-badge" class="badge hidden">0</span></button>
+          <button id="new-chat" title="New chat">＋</button>
+        </div>
+      </div>
+      <ul id="conversation-list"></ul>
+      <button id="tasks-btn" title="Scheduled proactive tasks">⏰ Scheduled tasks</button>
+      <button id="memory-btn" title="What Oli remembers">🧠 Memory</button>
+    </aside>
+
+    <main id="main">
+      <div id="messages">
+        <div class="empty-state">
+          <h1>Oli</h1>
+          <p>Your personal assistant with live web access. Ask anything.</p>
+          <div class="suggestions">
+            <button class="suggestion">What's in the tech news today?</button>
+            <button class="suggestion">Summarize the top 3 stories on Hacker News</button>
+            <button class="suggestion">Explain what browser-use is</button>
+          </div>
+        </div>
+      </div>
+
+      <form id="composer" autocomplete="off">
+        <button id="mic" type="button" title="Hold a conversation by voice">🎙</button>
+        <textarea id="input" rows="1" placeholder="Message Oli…"></textarea>
+        <button id="send" type="submit" title="Send">➤</button>
+      </form>
+      <div id="voice-status" class="hidden"></div>
+    </main>
+  </div>
+
+  <div id="memory-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>🧠 What Oli remembers</h2>
+        <button id="memory-close" title="Close">✕</button>
+      </div>
+      <form id="memory-add">
+        <input id="memory-input" type="text" placeholder="Teach Oli a fact about you…" />
+        <button type="submit">Add</button>
+      </form>
+      <ul id="memory-list"></ul>
+    </div>
+  </div>
+
+  <div id="tasks-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>⏰ Scheduled tasks</h2>
+        <button id="tasks-close" title="Close">✕</button>
+      </div>
+      <form id="task-add">
+        <input id="task-title" type="text" placeholder="Title (e.g. Morning briefing)" />
+        <textarea id="task-prompt" rows="2" placeholder="What should Oli do? (e.g. Summarize today's top tech news)"></textarea>
+        <div class="task-schedule">
+          <select id="task-kind">
+            <option value="daily">Daily at</option>
+            <option value="interval">Every</option>
+          </select>
+          <input id="task-time" type="time" value="07:00" />
+          <input id="task-interval" type="number" min="1" value="60" class="hidden" />
+          <select id="task-interval-unit" class="hidden">
+            <option value="60">minutes</option>
+            <option value="3600">hours</option>
+          </select>
+          <button type="submit">Add task</button>
+        </div>
+      </form>
+      <ul id="task-list"></ul>
+    </div>
+  </div>
+
+  <div id="notif-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>🔔 Notifications</h2>
+        <button id="notif-close" title="Close">✕</button>
+      </div>
+      <ul id="notif-list"></ul>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
