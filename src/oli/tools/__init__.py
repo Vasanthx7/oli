@@ -1,11 +1,15 @@
-"""Tool registry: maps tool names to their JSON schema and async handler.
+"""Tool registry: the single place capabilities are declared.
 
-The agent loop passes SCHEMAS to the model and dispatches tool calls through
-HANDLERS. Adding a capability = add a module here and register it below.
+Each entry pairs an OpenAI-style JSON schema with an async handler. `langchain_tools()`
+adapts these into LangChain `StructuredTool`s for the LangGraph agent, so adding a
+capability is still just one entry here. `run_tool`/`SCHEMAS` remain for direct
+dispatch and tests.
 """
 
 from collections.abc import Awaitable, Callable
 from typing import TypedDict
+
+from langchain_core.tools import StructuredTool
 
 from . import browse, memory_tools, web_fetch, web_search
 
@@ -26,6 +30,26 @@ _TOOLS: dict[str, Tool] = {
 }
 
 SCHEMAS: list[dict] = [t["schema"] for t in _TOOLS.values()]
+
+
+def langchain_tools() -> list[StructuredTool]:
+    """Adapt the registry into LangChain StructuredTools for the LangGraph agent.
+
+    Name and description come from each tool's schema; the argument schema is
+    inferred from the handler's type hints. The async handler is used directly as
+    the tool's coroutine.
+    """
+    tools: list[StructuredTool] = []
+    for name, tool in _TOOLS.items():
+        fn = tool["schema"]["function"]
+        tools.append(
+            StructuredTool.from_function(
+                coroutine=tool["handler"],
+                name=name,
+                description=fn["description"],
+            )
+        )
+    return tools
 
 
 def has_tool(name: str) -> bool:

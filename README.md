@@ -11,7 +11,8 @@ Powered by [Groq](https://groq.com) (OpenAI-compatible API).
 ## Stack
 
 - **Backend:** FastAPI + Uvicorn (Python)
-- **LLM:** Groq (`gpt-oss-120b` by default), swappable via env
+- **Agent:** LangGraph (`StateGraph`: agent ⇄ tools, ReAct-style), streaming via `astream_events`
+- **LLM:** Groq (`gpt-oss-120b` by default) via a provider-agnostic OpenAI-compatible client, swappable via env
 - **Browsing:** browser-use (headless Chromium)
 - **Search / fetch:** ddgs + httpx + trafilatura
 - **Storage:** SQLite (conversations + messages)
@@ -137,7 +138,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 **Productionization (in progress):**
 
 - [x] Phase A — Foundation: typed settings, structured logging, ruff/mypy, tests, CI, ADRs
-- [ ] Phase B — Migrate agent to LangGraph
+- [x] Phase B — Agent migrated to LangGraph (StateGraph + ToolNode, streaming via astream_events)
 - [ ] Phase C — Postgres + pgvector + multi-tenant data model
 - [ ] Phase D — Auth & multi-user SaaS surface
 - [ ] Phase E — Background jobs (Arq + Redis)

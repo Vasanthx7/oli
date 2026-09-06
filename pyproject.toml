@@ -18,6 +18,9 @@ dependencies = [
     "numpy>=1.26",
     "pydantic-settings>=2.4",
     "structlog>=24.4",
+    "langgraph>=0.2.40",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
 ]
 
 [project.optional-dependencies]
