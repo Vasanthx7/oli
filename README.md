@@ -155,10 +155,9 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [x] Phase A — Foundation: typed settings, structured logging, ruff/mypy, tests, CI, ADRs
 - [x] Phase B — Agent migrated to LangGraph (StateGraph + ToolNode, streaming via astream_events)
 - [x] Phase C — Async SQLAlchemy + Alembic migrations, Postgres-ready (SQLite dev / Postgres+pgvector prod), docker-compose
-- [ ] Phase D — Auth & multi-user SaaS surface (per-user data isolation)
-- [ ] Phase E — Background jobs (Arq + Redis)
-- [ ] Phase F — Docker + docker-compose
-- [ ] Phase G — CI/CD delivery (build → registry → deploy)
-- [ ] Phase H — Deploy (free-tier first) + Terraform IaC
+- [~] Phase D — Auth & multi-user SaaS — **deferred; single-user for now** (ADR 0008)
+- [ ] Phase F — Docker + docker-compose (containerize the app)
+- [ ] Phase H — Deploy (free-tier first) + Terraform IaC + HTTPS
 - [ ] Phase I — Observability (metrics, logs, tracing, alerts, backups)
+- [ ] Phase E — Background jobs (Arq + Redis) — optional for single-user
 - [ ] Phase J — Portfolio polish

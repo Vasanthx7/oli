@@ -12,6 +12,7 @@ Format follows [Michael Nygard's ADR template](https://cognitect.com/blog/2011/1
 | [0002](0002-build-agent-from-scratch-then-adopt-framework.md) | Build the agent from scratch, then adopt a framework | Accepted |
 | [0003](0003-langgraph-for-agent-orchestration.md) | Use LangGraph for agent orchestration | Accepted |
 | [0004](0004-postgres-pgvector-for-data-and-memory.md) | Postgres + pgvector for data and memory | Accepted |
-| [0005](0005-multi-user-saas-with-auth.md) | Multi-user SaaS with authentication | Accepted |
+| [0005](0005-multi-user-saas-with-auth.md) | Multi-user SaaS with authentication | Superseded by 0008 |
 | [0006](0006-groq-default-swappable-llm-provider.md) | Groq as the default, swappable LLM provider | Accepted |
 | [0007](0007-deploy-free-tier-first.md) | Deploy free-tier first, evolve orchestration later | Accepted |
+| [0008](0008-defer-multi-user-stay-single-user.md) | Defer multi-user; stay single-user for now | Accepted |

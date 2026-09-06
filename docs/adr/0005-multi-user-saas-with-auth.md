@@ -1,7 +1,7 @@
 # 5. Multi-user SaaS with authentication
 
 Date: 2026-09-06
-Status: Accepted
+Status: Superseded by [ADR 0008](0008-defer-multi-user-stay-single-user.md)
 
 ## Context
 
