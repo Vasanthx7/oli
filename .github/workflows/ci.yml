@@ -40,3 +40,48 @@ jobs:
       # secrets are required in CI.
       - name: Pytest
         run: uv run pytest --cov --cov-report=term-missing
+
+  container:
+    name: Build image + smoke test on Postgres
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: oli
+          POSTGRES_PASSWORD: oli
+          POSTGRES_DB: oli
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U oli -d oli"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t oli:ci .
+
+      - name: Run the container (applies migrations, then serves)
+        run: |
+          docker run -d --name oli --network host \
+            -e DATABASE_URL=postgresql+asyncpg://oli:oli@localhost:5432/oli \
+            -e GROQ_API_KEY=ci-dummy-key \
+            -e ENVIRONMENT=production \
+            -e HOST=0.0.0.0 -e PORT=8000 \
+            oli:ci
+
+      - name: Wait for liveness, then verify readiness (DB reachable)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health | grep -q '"status":"ok"'
+          curl -fsS http://localhost:8000/health/ready | grep -q '"status":"ready"'
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs oli

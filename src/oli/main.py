@@ -16,7 +16,12 @@ if sys.platform == "win32":
 
 import structlog  # noqa: E402
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
-from fastapi.responses import FileResponse, Response, StreamingResponse  # noqa: E402
+from fastapi.responses import (  # noqa: E402
+    FileResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
@@ -60,6 +65,22 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Oli", lifespan=lifespan)
+
+# Cap request bodies (audio uploads are the largest legitimate payload).
+MAX_REQUEST_BYTES = 25 * 1024 * 1024
+
+
+@app.middleware("http")
+async def security_and_limits(request: Request, call_next):
+    """Reject oversized requests and add baseline security headers to every response."""
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BYTES:
+        return JSONResponse({"detail": "Request too large"}, status_code=413)
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.middleware("http")
@@ -286,6 +307,30 @@ async def mark_read():
 async def delete_notification(nid: str):
     await store.delete_notification(nid)
     return {"ok": True}
+
+
+# --- health checks -------------------------------------------------------
+
+
+@app.get("/health")
+def health():
+    """Liveness: the process is up and serving."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """Readiness: the database is reachable. 503 if not (for orchestration probes)."""
+    from sqlalchemy import text
+
+    from .db import get_sessionmaker
+
+    try:
+        async with get_sessionmaker()() as s:
+            await s.execute(text("SELECT 1"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"database unavailable: {e}") from e
+    return {"status": "ready"}
 
 
 # --- static UI (mounted last so it doesn't shadow /api) -------------------

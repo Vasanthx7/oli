@@ -123,9 +123,10 @@ uv run pytest                # tests (fully offline — no API key needed)
 uv run pre-commit install    # enable the pre-commit hooks
 ```
 
-CI (GitHub Actions, `.github/workflows/ci.yml`) runs lint, format, type-check,
-and tests on every push and PR. Tests inject a dummy key and a throwaway database,
-so they never make network calls or touch real data.
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs two jobs on every push/PR:
+lint + format + type-check + tests (fully offline — dummy key, throwaway DB), and
+a **container job** that builds the Docker image and smoke-tests it against a real
+Postgres service (applies migrations, checks `/health` and `/health/ready`).
 
 ### Database
 
