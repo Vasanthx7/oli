@@ -176,7 +176,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [x] Phase B — Agent migrated to LangGraph (StateGraph + ToolNode, streaming via astream_events)
 - [x] Phase C — Async SQLAlchemy + Alembic migrations, Postgres-ready (SQLite dev / Postgres+pgvector prod), docker-compose
 - [~] Phase D — Auth & multi-user SaaS — **deferred; single-user for now** (ADR 0008)
-- [ ] Phase F — Docker + docker-compose (containerize the app)
+- [x] Phase F — Docker + docker-compose (multi-stage image, verified in CI against Postgres)
 - [ ] Phase H — Deploy (free-tier first) + Terraform IaC + HTTPS
 - [x] Phase I — Observability: Prometheus metrics + /metrics, LangSmith tracing, JSON logs, Grafana stack (compose profile)
 - [x] Phase J — Portfolio polish: architecture diagram, runbook, CI badge, docs
