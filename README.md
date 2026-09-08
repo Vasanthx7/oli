@@ -1,5 +1,7 @@
 # Oli
 
+[![CI](https://github.com/Vasanthx7/oli/actions/workflows/ci.yml/badge.svg)](https://github.com/Vasanthx7/oli/actions/workflows/ci.yml)
+
 **Oli** (Tamil: ஒளி, "light / radiance") is a personal AI assistant that runs as a web
 app: chat with streaming responses, a configurable personality, persistent conversation
 history, long-term memory, voice, proactive scheduled tasks, and live-internet tools —
@@ -7,6 +9,8 @@ web search, page fetch, and autonomous browsing via
 [browser-use](https://github.com/browser-use/browser-use).
 
 Powered by [Groq](https://groq.com) (OpenAI-compatible API).
+
+> **Docs:** [Architecture](docs/architecture.md) · [Runbook](docs/RUNBOOK.md) · [Decision records](docs/adr/)
 
 ## Stack
 
@@ -174,5 +178,5 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [ ] Phase F — Docker + docker-compose (containerize the app)
 - [ ] Phase H — Deploy (free-tier first) + Terraform IaC + HTTPS
 - [x] Phase I — Observability: Prometheus metrics + /metrics, LangSmith tracing, JSON logs, Grafana stack (compose profile)
-- [ ] Phase E — Background jobs (Arq + Redis) — optional for single-user
-- [ ] Phase J — Portfolio polish
+- [x] Phase J — Portfolio polish: architecture diagram, runbook, CI badge, docs
+- [ ] Phase E — Background jobs (Arq + Redis) — optional for single-user; bundled with the post-restart Docker work
