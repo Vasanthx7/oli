@@ -20,7 +20,7 @@ from collections.abc import AsyncGenerator
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 
-from . import memory
+from . import memory, metrics
 from .agent_graph import RECURSION_LIMIT, get_graph
 from .llm import LLMClient
 from .storage import Storage
@@ -76,6 +76,7 @@ async def run_turn(
     user_message: str,
 ) -> AsyncGenerator[dict, None]:
     """Run one full user turn, yielding events. Persists user + assistant + tool messages."""
+    metrics.CHAT_TURNS.inc()
     await store.add_message(conversation_id, "user", user_message)
     seed = _history_to_lc(await store.get_messages(conversation_id))
 
@@ -102,6 +103,7 @@ async def run_turn(
                     final_content = _text(msg.content)
 
             elif kind == "on_tool_start":
+                metrics.TOOL_CALLS.labels(tool=event["name"]).inc()
                 yield {
                     "type": "tool_start",
                     "name": event["name"],

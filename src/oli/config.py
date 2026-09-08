@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
+    # --- Observability: LangSmith tracing (opt-in) for the LangGraph agent ---
+    langsmith_tracing: bool = False
+    langsmith_api_key: str = ""
+    langsmith_project: str = "oli"
+
     # --- LLM provider (Groq / any OpenAI-compatible endpoint) ---
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"

@@ -140,6 +140,21 @@ Migrations live in `alembic/`. Create one after changing `models.py` with
 
 Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 
+### Observability
+
+- **Metrics:** Prometheus metrics at `/metrics` (HTTP request count/latency, chat
+  turns, tool calls). A Prometheus + Grafana stack is available as an optional
+  compose profile:
+
+  ```bash
+  docker compose --profile monitoring up   # Grafana on :3000, Prometheus on :9090
+  ```
+
+- **Tracing:** the LangGraph agent can trace to [LangSmith](https://smith.langchain.com)
+  — set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in `.env`.
+- **Logs:** structured (structlog), JSON in production (`LOG_JSON=true`), each line
+  carrying a request id.
+
 ## Roadmap
 
 **Feature-complete (prototype):**
@@ -158,6 +173,6 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [~] Phase D — Auth & multi-user SaaS — **deferred; single-user for now** (ADR 0008)
 - [ ] Phase F — Docker + docker-compose (containerize the app)
 - [ ] Phase H — Deploy (free-tier first) + Terraform IaC + HTTPS
-- [ ] Phase I — Observability (metrics, logs, tracing, alerts, backups)
+- [x] Phase I — Observability: Prometheus metrics + /metrics, LangSmith tracing, JSON logs, Grafana stack (compose profile)
 - [ ] Phase E — Background jobs (Arq + Redis) — optional for single-user
 - [ ] Phase J — Portfolio polish

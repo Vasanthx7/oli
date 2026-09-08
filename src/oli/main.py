@@ -16,11 +16,11 @@ if sys.platform == "win32":
 
 import structlog  # noqa: E402
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
-from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import FileResponse, Response, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from . import config, memory  # noqa: E402
+from . import config, memory, metrics  # noqa: E402
 from .agent import run_turn  # noqa: E402
 from .db import dispose_engine, init_models  # noqa: E402
 from .logging_config import configure_logging, get_logger  # noqa: E402
@@ -28,8 +28,10 @@ from .memory import MemoryStore  # noqa: E402
 from .scheduler import Scheduler, initial_next_run  # noqa: E402
 from .storage import Storage  # noqa: E402
 from .stt import Transcriber  # noqa: E402
+from .tracing import configure_tracing  # noqa: E402
 
 configure_logging()
+configure_tracing()
 log = get_logger(__name__)
 
 store = Storage()
@@ -62,13 +64,24 @@ app = FastAPI(title="Oli", lifespan=lifespan)
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
-    """Bind a request id to the log context so every log line is traceable."""
+    """Bind a request id to the log context and record request metrics."""
     request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:12])
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=request_id, path=request.url.path)
+
+    start = time.perf_counter()
     response = await call_next(request)
+    metrics.REQUEST_LATENCY.labels(method=request.method).observe(time.perf_counter() - start)
+    metrics.REQUEST_COUNT.labels(method=request.method, status=response.status_code).inc()
+
     response.headers["x-request-id"] = request_id
     return response
+
+
+@app.get("/metrics")
+def prometheus_metrics():
+    payload, content_type = metrics.render()
+    return Response(content=payload, media_type=content_type)
 
 
 # --- request models ------------------------------------------------------
