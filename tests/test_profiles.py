@@ -124,3 +124,53 @@ async def test_profiles_api_rejects_duplicate(client):
 async def test_login_missing_profile_is_404(client):
     res = await client.post("/api/profiles/nope/login")
     assert res.status_code == 404
+
+
+# --- input validation (QA hardening) -------------------------------------
+
+
+async def test_api_rejects_blank_label(client):
+    for label in ("", "   "):
+        res = await client.post("/api/profiles", json={"label": label})
+        assert res.status_code == 422, f"blank label {label!r} should be rejected"
+
+
+async def test_api_rejects_dangerous_start_url(client):
+    for url in ("file:///c:/windows/win.ini", "javascript:alert(1)", "data:text/html,x"):
+        res = await client.post("/api/profiles", json={"label": "X", "start_url": url})
+        assert res.status_code == 422, f"scheme {url!r} should be rejected"
+
+
+async def test_api_accepts_http_and_empty_start_url(client):
+    ok = await client.post("/api/profiles", json={"label": "Ok", "start_url": "https://x.com"})
+    assert ok.status_code == 200
+    ok2 = await client.post("/api/profiles", json={"label": "NoUrl", "start_url": ""})
+    assert ok2.status_code == 200
+
+
+# --- login/browse collision guard ----------------------------------------
+
+
+async def test_is_logging_in_flag(storage):
+    mgr = ProfileManager(storage)
+    await mgr.create("Site", "")
+    assert mgr.is_logging_in("site") is False
+    # Simulate an open login window without launching a real browser.
+    mgr._logins["site"] = object()
+    assert mgr.is_logging_in("site") is True
+
+
+async def test_browse_refuses_while_login_open(storage, monkeypatch):
+    """A profile with cookies but an open login window must not launch a 2nd browser."""
+    prior = profiles.active()
+    mgr = ProfileManager(storage)
+    profiles.set_active(mgr)
+    # Pretend it's both logged in and currently being re-logged-in.
+    monkeypatch.setattr(profiles, "has_cookies", lambda name: True)
+    mgr._logins["site"] = object()
+    try:
+        result = await browse.browse("do a thing", profile="site")
+        assert "login window" in result
+    finally:
+        if prior is not None:
+            profiles.set_active(prior)

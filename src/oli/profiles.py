@@ -161,9 +161,18 @@ class ProfileManager:
         log.info("profile_login_finished", profile=name, logged_in=has_cookies(name))
         return {"name": name, "logged_in": has_cookies(name), "last_login": when}
 
+    def is_logging_in(self, name: str) -> bool:
+        """True while an interactive login window is open for this profile.
+
+        A live headful login holds the profile's user-data dir; a concurrent
+        headless browse on the same dir would fail, so browse checks this first.
+        """
+        return name in self._logins
+
     async def delete(self, name: str) -> None:
         """Remove the profile: close any live login, delete the row and the on-disk cookies."""
-        await self.finish_login(name) if name in self._logins else None
+        if name in self._logins:
+            await self.finish_login(name)
         await self._store.delete_profile(name)
         _rmtree(profile_dir(name))
         log.info("profile_deleted", profile=name)
