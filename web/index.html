@@ -21,6 +21,7 @@
       <button id="tasks-btn" title="Scheduled proactive tasks">⏰ Scheduled tasks</button>
       <button id="memory-btn" title="What Oli remembers">🧠 Memory</button>
       <button id="profiles-btn" title="Logged-in browser profiles">🔐 Browser profiles</button>
+      <button id="live-btn" title="Watch and drive a live browser">🖥 Live browser</button>
     </aside>
 
     <main id="main">
@@ -113,6 +114,34 @@
         <button type="submit">Add</button>
       </form>
       <ul id="profile-list"></ul>
+    </div>
+  </div>
+
+  <div id="live-modal" class="modal hidden">
+    <div class="modal-card live-card">
+      <div class="modal-head">
+        <h2>🖥 Live browser</h2>
+        <button id="live-close" title="Close">✕</button>
+      </div>
+      <p class="modal-note">
+        Watch and drive a real browser running on the server. Bind it to a profile
+        to <strong>log in once</strong> and save the session for the agent to reuse —
+        works even on a headless VM. <strong>Your password never reaches the AI.</strong>
+      </p>
+      <div id="live-controls">
+        <select id="live-profile" title="Save the session to this profile">
+          <option value="">No profile (temporary)</option>
+        </select>
+        <input id="live-url" type="text" placeholder="Enter a URL (e.g. x.com/login)" />
+        <button id="live-go" title="Navigate">Go</button>
+        <button id="live-start" class="primary">Start</button>
+        <button id="live-stop" class="danger hidden">Stop &amp; save</button>
+      </div>
+      <div id="live-stage">
+        <canvas id="live-canvas" width="1280" height="800" tabindex="0"></canvas>
+        <div id="live-placeholder">Press <strong>Start</strong> to open a live browser.</div>
+      </div>
+      <div id="live-status"></div>
     </div>
   </div>
 
