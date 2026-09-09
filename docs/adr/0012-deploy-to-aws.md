@@ -1,4 +1,4 @@
-# 11. Deploy to AWS: single EC2 instance, home Ollama over Tailscale
+# 12. Deploy to AWS: single EC2 instance, home Ollama over Tailscale
 
 Date: 2026-09-09
 Status: Accepted (implementation written, not yet applied/verified — no AWS account access in this session)

@@ -44,7 +44,7 @@ image.
 
 ## Production deploy (AWS)
 
-See [ADR 0011](adr/0011-deploy-to-aws.md) for the reasoning. Single EC2
+See [ADR 0012](adr/0012-deploy-to-aws.md) for the reasoning. Single EC2
 instance, docker-compose, Caddy auto-HTTPS via DuckDNS, chat routed to the
 operator's home-PC Ollama over Tailscale, browse on Groq.
 
@@ -89,7 +89,7 @@ docker compose -f docker-compose.prod.yml exec db psql -U oli -d oli
 ```
 
 - `terraform destroy` tears everything down (no backups exist yet — see ADR
-  0011's deferred items — so this **deletes all conversation/memory data**).
+  0012's deferred items — so this **deletes all conversation/memory data**).
 - If chat errors out, check Tailscale first: `tailscale status` on both the
   instance and the home PC, and confirm Ollama is actually listening on
   `0.0.0.0:11434` on the home PC.
