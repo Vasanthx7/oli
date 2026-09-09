@@ -13,32 +13,46 @@ import asyncio
 from typing import Any
 
 from .. import config, profiles
+from ..ratelimit import RateLimiter
 
-# browser-use drives headless Chromium; keep a step ceiling so a confused run can't loop forever.
-MAX_STEPS = 20
+# browser-use drives headless Chromium; keep a step ceiling so a confused run can't
+# loop forever. Lower than the old 20 to cut the number of LLM calls per browse,
+# which keeps us comfortably under Groq's per-minute request limit.
+MAX_STEPS = 12
+
+# Shared limiter: browse's per-step LLM calls are paced to Groq's request/min ceiling.
+_limiter = RateLimiter(config.settings.browser_max_rpm)
 
 
 def _build_llm():
-    """Return a browser-use LLM adapter pointed at Groq.
+    """Return a browser-use LLM adapter for the browser endpoint, rate-limited.
 
-    Prefer the native ChatGroq adapter (purpose-built for Groq); fall back to the
-    OpenAI-compatible adapter aimed at Groq's endpoint if ChatGroq is unavailable.
+    Prefer the native ChatGroq adapter; fall back to the OpenAI-compatible adapter.
+    Each adapter is subclassed so every `ainvoke` first passes through the shared
+    rate limiter — so browser-use's per-step calls can't blow past Groq's limit.
     """
-    # Native Groq adapter — talks to Groq directly, no base_url needed.
+    key = config.settings.browser_api_key
+    model = config.settings.browser_model
+    base_url = config.settings.browser_base_url
     try:
         from browser_use import ChatGroq
 
-        return ChatGroq(model=config.BROWSER_MODEL, api_key=config.GROQ_API_KEY)
+        class _ThrottledChatGroq(ChatGroq):
+            async def ainvoke(self, messages, output_format=None, **kwargs):
+                await _limiter.acquire()
+                return await super().ainvoke(messages, output_format, **kwargs)
+
+        return _ThrottledChatGroq(model=model, api_key=key)
     except Exception:
         pass
-    # Fallback: OpenAI-compatible adapter pointed at Groq's endpoint.
     from browser_use import ChatOpenAI
 
-    return ChatOpenAI(
-        model=config.BROWSER_MODEL,
-        api_key=config.GROQ_API_KEY,
-        base_url=config.GROQ_BASE_URL,
-    )
+    class _ThrottledChatOpenAI(ChatOpenAI):
+        async def ainvoke(self, messages, output_format=None, **kwargs):
+            await _limiter.acquire()
+            return await super().ainvoke(messages, output_format, **kwargs)
+
+    return _ThrottledChatOpenAI(model=model, api_key=key, base_url=base_url)
 
 
 def _extract_result(history) -> str:

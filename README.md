@@ -16,7 +16,7 @@ Powered by [Groq](https://groq.com) (OpenAI-compatible API).
 
 - **Backend:** FastAPI + Uvicorn (Python)
 - **Agent:** LangGraph (`StateGraph`: agent ⇄ tools, ReAct-style), streaming via `astream_events`
-- **LLM:** Groq (`gpt-oss-120b` by default) via a provider-agnostic OpenAI-compatible client, swappable via env
+- **LLM:** Groq (`gpt-oss-120b` by default) via a provider-agnostic OpenAI-compatible client, swappable via env — supports a **hybrid** split (local model for chat, Groq for browsing; see below)
 - **Browsing:** browser-use (headless Chromium)
 - **Search / fetch:** ddgs + httpx + trafilatura
 - **Storage:** async SQLAlchemy — SQLite for dev/test, PostgreSQL + pgvector for production (Alembic migrations)
@@ -158,6 +158,31 @@ Three paths keep memory fresh:
 
 Manage what Oli knows from the **🧠 Memory** panel in the sidebar, or via
 `GET/POST/DELETE /api/memories`.
+
+## Local & hybrid models (avoid rate limits)
+
+`browse` (browser-use) makes one LLM call per step, so on Groq's free tier
+(~30 req/min) a browse turn can hit `429`s. Oli supports a **hybrid** split
+([ADR 0010](docs/adr/0010-hybrid-local-chat-groq-browse.md)): run **chat + memory
+on a local model** (no rate limits, no cost) and keep **Groq's strong model for
+browsing**, where capability matters most.
+
+The chat and browser models have independent endpoints, each defaulting to
+`GROQ_*`. To go hybrid with a local [Ollama](https://ollama.com) model:
+
+```bash
+ollama pull qwen2.5:7b-instruct        # tool-calling capable, fits ~6GB VRAM
+```
+```ini
+# .env — chat goes local; browser stays on Groq (inherits GROQ_*)
+CHAT_BASE_URL=http://localhost:11434/v1
+CHAT_MODEL=qwen2.5:7b-instruct
+CHAT_API_KEY=ollama
+BROWSER_MAX_RPM=27          # pace browse's Groq calls under the free-tier limit
+```
+
+Leave the `CHAT_*` lines out to stay fully on Groq. Any OpenAI-compatible endpoint
+works (vLLM, LM Studio, llama.cpp) — it's just a `base_url`.
 
 ## Development
 
