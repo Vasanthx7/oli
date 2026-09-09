@@ -20,6 +20,7 @@
       <ul id="conversation-list"></ul>
       <button id="tasks-btn" title="Scheduled proactive tasks">⏰ Scheduled tasks</button>
       <button id="memory-btn" title="What Oli remembers">🧠 Memory</button>
+      <button id="profiles-btn" title="Logged-in browser profiles">🔐 Browser profiles</button>
     </aside>
 
     <main id="main">
@@ -92,6 +93,26 @@
         <button id="notif-close" title="Close">✕</button>
       </div>
       <ul id="notif-list"></ul>
+    </div>
+  </div>
+
+  <div id="profiles-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>🔐 Browser profiles</h2>
+        <button id="profiles-close" title="Close">✕</button>
+      </div>
+      <p class="modal-note">
+        Log into a site <strong>once</strong> in a real browser window; Oli reuses that
+        session when browsing — so it can act on your logged-in pages.
+        <strong>Your password is never sent to the AI.</strong>
+      </p>
+      <form id="profile-add">
+        <input id="profile-label" type="text" placeholder="Name (e.g. Twitter)" />
+        <input id="profile-url" type="url" placeholder="Login URL (e.g. https://x.com/login)" />
+        <button type="submit">Add</button>
+      </form>
+      <ul id="profile-list"></ul>
     </div>
   </div>
 

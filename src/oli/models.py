@@ -90,3 +90,24 @@ class Notification(Base):
     status: Mapped[str] = mapped_column(String(16), default="ok")  # ok | error
     read: Mapped[bool] = mapped_column(Integer, default=0)
     created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)
+
+
+class BrowserProfile(Base):
+    """A named, persistent browser login the agent can reuse when browsing.
+
+    The cookies themselves live on disk in ``PROFILES_DIR/<name>`` (a Chromium
+    user-data dir written by a human login) — this row is only the metadata the
+    UI needs. No credentials are stored here or anywhere in the database.
+    """
+
+    __tablename__ = "browser_profiles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    # Stable, filesystem-safe key that names the on-disk profile dir.
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Human-friendly label shown in the UI.
+    label: Mapped[str] = mapped_column(String(120), default="")
+    # Where the login window first navigates (e.g. https://x.com/login).
+    start_url: Mapped[str] = mapped_column(String(500), default="")
+    last_login: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)

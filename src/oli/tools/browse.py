@@ -12,7 +12,7 @@ defensively: we try browser-use's own chat classes first, then fall back to lang
 import asyncio
 from typing import Any
 
-from .. import config
+from .. import config, profiles
 
 # browser-use drives headless Chromium; keep a step ceiling so a confused run can't loop forever.
 MAX_STEPS = 20
@@ -55,7 +55,13 @@ def _extract_result(history) -> str:
     return str(history)
 
 
-async def browse(goal: str) -> str:
+async def browse(goal: str, profile: str | None = None) -> str:
+    """Drive a headless browser toward ``goal``.
+
+    When ``profile`` names a saved browser profile, the run reuses that profile's
+    authenticated cookies (from a prior human login) so it can act on logged-in
+    pages. Credentials are never passed here — only the profile *name*.
+    """
     try:
         from browser_use import Agent
     except Exception as e:  # noqa: BLE001
@@ -66,8 +72,21 @@ async def browse(goal: str) -> str:
     except Exception as e:  # noqa: BLE001
         return f"browse unavailable: could not build LLM adapter ({e})"
 
+    # Resolve a persistent, authenticated profile if one was requested.
+    browser_profile = None
+    if profile:
+        if not profiles.has_cookies(profile):
+            return (
+                f"browse: profile '{profile}' isn't logged in yet. Open the "
+                "🔐 Profiles panel and sign in once, then retry."
+            )
+        browser_profile = profiles.build_profile(profile, headless=True)
+
     try:
-        agent: Any = Agent(task=goal, llm=llm)
+        kwargs: dict[str, Any] = {"task": goal, "llm": llm}
+        if browser_profile is not None:
+            kwargs["browser_profile"] = browser_profile
+        agent: Any = Agent(**kwargs)
         # Some versions accept max_steps on run(); tolerate signature differences.
         try:
             history = await agent.run(max_steps=MAX_STEPS)
@@ -82,9 +101,9 @@ async def browse(goal: str) -> str:
 _browse_lock = asyncio.Lock()
 
 
-async def browse_serialized(goal: str) -> str:
+async def browse_serialized(goal: str, profile: str | None = None) -> str:
     async with _browse_lock:
-        return await browse(goal)
+        return await browse(goal, profile=profile)
 
 
 SCHEMA = {
@@ -96,7 +115,9 @@ SCHEMA = {
             "and fill forms across multiple pages. Use ONLY when reading a page isn't "
             "enough — i.e. when the task needs interaction, multi-step navigation, or a "
             "dynamic/JavaScript-heavy site. Describe the goal in plain language "
-            "(e.g. 'Go to news.ycombinator.com and list the top 3 story titles')."
+            "(e.g. 'Go to news.ycombinator.com and list the top 3 story titles'). "
+            "To act on a site the user is logged into, pass 'profile' with the name of "
+            "one of their saved browser profiles; never ask for or pass passwords."
         ),
         "parameters": {
             "type": "object",
@@ -104,7 +125,14 @@ SCHEMA = {
                 "goal": {
                     "type": "string",
                     "description": "The browsing goal, in plain language.",
-                }
+                },
+                "profile": {
+                    "type": "string",
+                    "description": (
+                        "Optional name of a saved, logged-in browser profile to reuse "
+                        "(e.g. 'twitter'). Omit for public browsing."
+                    ),
+                },
             },
             "required": ["goal"],
         },

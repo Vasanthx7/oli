@@ -25,11 +25,12 @@ from fastapi.responses import (  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from . import config, memory, metrics  # noqa: E402
+from . import config, memory, metrics, profiles  # noqa: E402
 from .agent import run_turn  # noqa: E402
 from .db import dispose_engine, init_models  # noqa: E402
 from .logging_config import configure_logging, get_logger  # noqa: E402
 from .memory import MemoryStore  # noqa: E402
+from .profiles import ProfileManager  # noqa: E402
 from .scheduler import Scheduler, initial_next_run  # noqa: E402
 from .storage import Storage  # noqa: E402
 from .stt import Transcriber  # noqa: E402
@@ -48,6 +49,10 @@ memory.set_active(memory_store)
 # Proactive scheduler runs due tasks in the background for the server's lifetime.
 scheduler = Scheduler(store)
 
+# Persistent browser profiles (authenticated sessions the browse tool can reuse).
+profile_manager = ProfileManager(store)
+profiles.set_active(profile_manager)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -60,6 +65,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await scheduler.stop()
+        await profile_manager.shutdown()
         await dispose_engine()
         log.info("shutdown")
 
@@ -127,6 +133,11 @@ class ScheduledTaskRequest(BaseModel):
     schedule_kind: str  # 'interval' | 'daily'
     interval_sec: int | None = None
     time_of_day: str | None = None  # 'HH:MM'
+
+
+class ProfileRequest(BaseModel):
+    label: str
+    start_url: str = ""
 
 
 # --- conversation endpoints ----------------------------------------------
@@ -306,6 +317,47 @@ async def mark_read():
 @app.delete("/api/notifications/{nid}")
 async def delete_notification(nid: str):
     await store.delete_notification(nid)
+    return {"ok": True}
+
+
+# --- browser profiles ----------------------------------------------------
+
+
+@app.get("/api/profiles")
+async def list_profiles():
+    return await profile_manager.list_with_status()
+
+
+@app.post("/api/profiles")
+async def create_profile(req: ProfileRequest):
+    try:
+        return await profile_manager.create(req.label, req.start_url)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@app.post("/api/profiles/{name}/login")
+async def start_profile_login(name: str):
+    """Open a visible browser window so the user can log in once."""
+    try:
+        await profile_manager.start_login(name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        # e.g. no display on a headless host.
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return {"ok": True, "status": "window_open"}
+
+
+@app.post("/api/profiles/{name}/login/finish")
+async def finish_profile_login(name: str):
+    """Close the login window, persisting the authenticated session to disk."""
+    return await profile_manager.finish_login(name)
+
+
+@app.delete("/api/profiles/{name}")
+async def delete_profile(name: str):
+    await profile_manager.delete(name)
     return {"ok": True}
 
 

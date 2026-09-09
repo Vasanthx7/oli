@@ -56,6 +56,7 @@ src/oli/
   memory.py        long-term memory: remember, recall, auto-extract facts
   stt.py           speech-to-text via Groq Whisper
   scheduler.py     proactive scheduler: runs tasks on a schedule -> notifications
+  profiles.py      persistent browser profiles: one-time human login -> reusable cookies
   tools/
     web_search.py  DuckDuckGo search
     web_fetch.py   fetch + extract clean article text
@@ -94,6 +95,32 @@ immediately with **Run now**. Manage via `GET/POST/DELETE /api/tasks` and
 
 Because the scheduler lives inside the server process, proactive tasks run
 whenever the server is up — which, on the always-on VM, is all the time.
+
+## Logged-in browsing (browser profiles)
+
+By default `browse` uses a fresh, anonymous browser, so it can only reach public
+pages. To let Oli act on sites **you're logged into** (your timeline, a dashboard
+behind a login), give it a **browser profile** from the **🔐 Browser profiles**
+panel:
+
+1. **Add** a profile — a name and the site's login URL (e.g. `https://x.com/login`).
+2. **Log in** — Oli opens a real browser window; you sign in **yourself**, once.
+3. **Done** — Chromium persists the session's cookies to `data/profiles/<name>/`.
+
+From then on, `browse` can reuse that authenticated session: the model just names
+the profile (`browse(goal, profile="twitter")`) — it can also pick one on its own
+when a task clearly needs your account.
+
+**Your password is never sent to the AI.** The human performs the login in a real
+browser; only the resulting *cookies* are stored, and the model only ever refers
+to a profile *by name* — there is no field anywhere a credential passes through.
+(Cookies are bearer tokens, so `data/profiles/` is gitignored and should be
+treated as a secret; on a shared host, restrict its permissions.)
+
+> **Headless note:** the one-time login needs a machine **with a display** (your
+> PC). On a headless VM, either create the profile locally and copy the folder up,
+> or use the planned in-browser (noVNC) login flow. CAPTCHA and 2FA remain hard
+> stops for any automated browser — that's expected, not a bug.
 
 ## Long-term memory
 

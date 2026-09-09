@@ -8,7 +8,7 @@ def test_langchain_tools_have_expected_names_and_args():
     ts = {t.name: set(t.args) for t in tools.langchain_tools()}
     assert ts["web_search"] == {"query"}
     assert ts["web_fetch"] == {"url"}
-    assert ts["browse"] == {"goal"}
+    assert ts["browse"] == {"goal", "profile"}  # profile is optional (logged-in sessions)
     assert ts["remember"] == {"content"}
     assert ts["recall_memory"] == {"query"}
 

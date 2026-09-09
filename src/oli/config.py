@@ -18,9 +18,14 @@ DATA_DIR = ROOT / "data"
 LOGS_DIR = ROOT / "logs"
 WEB_DIR = ROOT / "web"
 PERSONALITY_FILE = ROOT / "personality.md"
+# Persistent per-site browser profiles (cookies from a human login). One subdir
+# per named profile; used by browse() so the agent reuses an authenticated session
+# without ever seeing credentials. Gitignored via data/.
+PROFILES_DIR = DATA_DIR / "profiles"
 
 DATA_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
+PROFILES_DIR.mkdir(exist_ok=True)
 
 
 class Settings(BaseSettings):

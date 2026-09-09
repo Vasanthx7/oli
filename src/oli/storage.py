@@ -11,7 +11,14 @@ import uuid
 from sqlalchemy import delete, func, select, update
 
 from .db import get_sessionmaker
-from .models import Conversation, Memory, Message, Notification, ScheduledTask
+from .models import (
+    BrowserProfile,
+    Conversation,
+    Memory,
+    Message,
+    Notification,
+    ScheduledTask,
+)
 
 
 def _conversation_dict(c: Conversation) -> dict:
@@ -52,6 +59,17 @@ def _notification_dict(n: Notification) -> dict:
         "status": n.status,
         "read": int(n.read),
         "created_at": n.created_at,
+    }
+
+
+def _profile_dict(p: BrowserProfile) -> dict:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "label": p.label,
+        "start_url": p.start_url,
+        "last_login": p.last_login,
+        "created_at": p.created_at,
     }
 
 
@@ -280,4 +298,39 @@ class Storage:
     async def delete_notification(self, nid: str) -> None:
         async with self._sm() as s:
             await s.execute(delete(Notification).where(Notification.id == nid))
+            await s.commit()
+
+    # --- browser profiles ------------------------------------------------
+
+    async def add_profile(self, name: str, label: str, start_url: str) -> str:
+        async with self._sm() as s:
+            p = BrowserProfile(id=uuid.uuid4().hex, name=name, label=label, start_url=start_url)
+            s.add(p)
+            await s.commit()
+            return p.id
+
+    async def list_profiles(self) -> list[dict]:
+        async with self._sm() as s:
+            rows = (
+                await s.execute(select(BrowserProfile).order_by(BrowserProfile.created_at.asc()))
+            ).scalars()
+            return [_profile_dict(p) for p in rows]
+
+    async def get_profile_by_name(self, name: str) -> dict | None:
+        async with self._sm() as s:
+            p = (
+                await s.execute(select(BrowserProfile).where(BrowserProfile.name == name))
+            ).scalar_one_or_none()
+            return _profile_dict(p) if p else None
+
+    async def touch_profile_login(self, name: str, when: float) -> None:
+        async with self._sm() as s:
+            await s.execute(
+                update(BrowserProfile).where(BrowserProfile.name == name).values(last_login=when)
+            )
+            await s.commit()
+
+    async def delete_profile(self, name: str) -> None:
+        async with self._sm() as s:
+            await s.execute(delete(BrowserProfile).where(BrowserProfile.name == name))
             await s.commit()
