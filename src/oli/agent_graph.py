@@ -34,11 +34,16 @@ class State(TypedDict):
 
 
 def build_model() -> ChatOpenAI:
-    """Provider-agnostic chat model pointed at the configured endpoint."""
+    """Provider-agnostic chat model pointed at the configured chat endpoint.
+
+    Uses the `chat_*` settings, which may target a local model (e.g. Ollama) while
+    the browser tool stays on Groq — see ADR 0010. `api_key` is required by the
+    OpenAI client but is a dummy for local servers.
+    """
     return ChatOpenAI(
-        model=settings.groq_model,
-        api_key=SecretStr(settings.groq_api_key),
-        base_url=settings.groq_base_url,
+        model=settings.chat_model,
+        api_key=SecretStr(settings.chat_api_key or "local"),
+        base_url=settings.chat_base_url,
         temperature=0.7,
     )
 

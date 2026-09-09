@@ -1,0 +1,109 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - curl
+
+write_files:
+  # 2GB swap as headroom on a 1GB-RAM free-tier instance (Postgres + app +
+  # occasional Chromium for `browse` can spike memory).
+  - path: /etc/systemd/system/swapfile.service
+    content: |
+      [Unit]
+      Description=Create and enable a 2GB swapfile
+      DefaultDependencies=no
+      Before=local-fs.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=true
+      ExecStartPre=-/bin/sh -c 'test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)'
+      ExecStart=-/sbin/swapon /swapfile
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /opt/oli/Caddyfile
+    content: |
+      {$DUCKDNS_DOMAIN} {
+      	reverse_proxy app:8000
+      }
+
+  - path: /opt/oli/scripts/init-pgvector.sql
+    content: |
+      CREATE EXTENSION IF NOT EXISTS vector;
+
+  - path: /opt/oli/docker-compose.prod.yml
+    content: |
+      services:
+        db:
+          image: pgvector/pgvector:pg16
+          restart: unless-stopped
+          environment:
+            POSTGRES_USER: oli
+            POSTGRES_PASSWORD: $${POSTGRES_PASSWORD}
+            POSTGRES_DB: oli
+          volumes:
+            - pgdata:/var/lib/postgresql/data
+            - ./scripts/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U oli -d oli"]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+        app:
+          image: ghcr.io/${ghcr_username}/oli:latest
+          restart: unless-stopped
+          env_file: .env
+          environment:
+            DATABASE_URL: postgresql+asyncpg://oli:$${POSTGRES_PASSWORD}@db:5432/oli
+            HOST: 0.0.0.0
+            PORT: "8000"
+            ENVIRONMENT: production
+            LOG_JSON: "true"
+          depends_on:
+            db:
+              condition: service_healthy
+
+        caddy:
+          image: caddy:2
+          restart: unless-stopped
+          env_file: .env
+          volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddy_data:/data
+            - caddy_config:/config
+          ports:
+            - "80:80"
+            - "443:443"
+          depends_on:
+            - app
+
+      volumes:
+        pgdata:
+        caddy_data:
+        caddy_config:
+
+  - path: /opt/oli/.env
+    permissions: '0600'
+    content: |
+      GROQ_API_KEY=${groq_api_key}
+      CHAT_BASE_URL=http://${home_ollama_tailscale_ip}:11434/v1
+      CHAT_MODEL=qwen2.5:7b-instruct
+      CHAT_API_KEY=ollama
+      POSTGRES_PASSWORD=${postgres_password}
+      DUCKDNS_DOMAIN=${duckdns_subdomain}.duckdns.org
+
+runcmd:
+  - systemctl enable --now swapfile.service
+  # Tailscale: join the same tailnet as the home PC running Ollama.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - tailscale up --authkey=${tailscale_authkey} --ssh
+  # One-time (idempotent) DuckDNS A-record update -> this instance's Elastic IP.
+  - curl -fsS "https://www.duckdns.org/update?domains=${duckdns_subdomain}&token=${duckdns_token}&ip=${elastic_ip}"
+  # Pull the private oli image, then bring the stack up.
+  - echo "${ghcr_pat}" | docker login ghcr.io -u "${ghcr_username}" --password-stdin
+  - cd /opt/oli && docker compose -f docker-compose.prod.yml pull
+  - cd /opt/oli && docker compose -f docker-compose.prod.yml up -d

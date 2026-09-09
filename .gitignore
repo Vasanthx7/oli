@@ -19,3 +19,10 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Terraform (state and vars contain secrets in plaintext)
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+terraform/*.tfplan

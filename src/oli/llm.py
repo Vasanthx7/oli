@@ -1,8 +1,9 @@
-"""Minimal Groq client (OpenAI-compatible) for non-streaming internal completions.
+"""Minimal OpenAI-compatible client for non-streaming internal completions.
 
 Since the migration to LangGraph (ADR 0003), the interactive agent uses a LangChain
 chat model. This lightweight client remains for internal, non-streamed tasks — chiefly
-memory fact-extraction — where we just need a single text completion.
+memory fact-extraction — where we just need a single text completion. It uses the
+`chat_*` endpoint, so it follows the reasoning model (local or Groq) — see ADR 0010.
 """
 
 import json
@@ -14,12 +15,12 @@ from . import config
 
 class LLMClient:
     def __init__(self):
-        config.require_api_key()
+        # No hard key requirement: local endpoints (Ollama) accept any token.
         self._client = AsyncOpenAI(
-            api_key=config.GROQ_API_KEY,
-            base_url=config.GROQ_BASE_URL,
+            api_key=config.settings.chat_api_key or "local",
+            base_url=config.settings.chat_base_url,
         )
-        self.model = config.GROQ_MODEL
+        self.model = config.settings.chat_model
 
     async def complete(self, messages: list[dict], temperature: float = 0.0) -> str:
         """Non-streaming completion; returns the assistant's text."""
