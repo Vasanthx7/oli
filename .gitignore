@@ -16,6 +16,12 @@ htmlcov/
 data/
 logs/
 
+# Test / coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # OS
 .DS_Store
 Thumbs.db

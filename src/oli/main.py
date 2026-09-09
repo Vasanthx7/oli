@@ -31,7 +31,7 @@ from fastapi.responses import (  # noqa: E402
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel, field_validator  # noqa: E402
 
 from . import config, live_browser, memory, metrics, profiles  # noqa: E402
 from .agent import run_turn  # noqa: E402
@@ -147,6 +147,23 @@ class ScheduledTaskRequest(BaseModel):
 class ProfileRequest(BaseModel):
     label: str
     start_url: str = ""
+
+    @field_validator("label")
+    @classmethod
+    def _label_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("label must not be empty")
+        return v
+
+    @field_validator("start_url")
+    @classmethod
+    def _url_is_http(cls, v: str) -> str:
+        # The login window navigates here, so only allow http(s) (or nothing) —
+        # never file:/javascript:/data: which could read local files or run script.
+        v = v.strip()
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError("start_url must be an http(s) URL")
+        return v
 
 
 class LiveStartRequest(BaseModel):
