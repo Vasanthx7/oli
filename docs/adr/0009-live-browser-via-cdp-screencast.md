@@ -38,9 +38,9 @@ This is delivered in two slices:
 
 - **A1 (this ADR):** an interactive live browser the user drives themselves —
   which also provides in-UI login on a headless VM.
-- **A2 (follow-up):** make an agent `browse` run watchable in the same view with a
-  "take control" pause. **B (future scope):** full computer use (a virtual desktop
-  + a vision/GUI-grounding model), which would need a model beyond the current
+- **A2 (shipped — see ADR 0011):** make an agent `browse` run watchable in the same
+  view with a "take control" pause. **B (future scope):** full computer use (a virtual
+  desktop + a vision/GUI-grounding model), which would need a model beyond the current
   text-only Groq default — see ADR 0006's swappable-provider seam.
 
 ## Consequences

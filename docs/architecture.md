@@ -67,6 +67,7 @@ flowchart TD
 | Agent graph | `agent_graph.py` | LangGraph `StateGraph`, model + tool binding, memory injection |
 | Turn orchestration | `agent.py` | Drives the graph, translates events, persistence, extraction |
 | Tools | `tools/` | web_search, web_fetch, browse (browser-use), remember, recall_memory |
+| Live browser | `live_browser.py` | CDP screencast → WebSocket; user-driven sessions *and* watching/taking control of a `browse` run |
 | Memory | `memory.py`, `embeddings.py` | Embed, dedupe, recall; local fastembed model |
 | Storage | `storage.py`, `models.py`, `db.py` | Async SQLAlchemy repository + models + engine |
 | Scheduler | `scheduler.py` | Runs proactive tasks on a schedule → notifications |
@@ -78,4 +79,5 @@ flowchart TD
 
 The "why" behind the stack is recorded in [Architecture Decision Records](adr/):
 the LangGraph migration, Postgres + pgvector, single-user scoping, the swappable
-LLM provider, and free-tier-first deployment.
+LLM provider, free-tier-first deployment, the live browser (CDP screencast), and
+watching/taking control of an autonomous browse.

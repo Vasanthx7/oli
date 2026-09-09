@@ -10,15 +10,20 @@ defensively: we try browser-use's own chat classes first, then fall back to lang
 """
 
 import asyncio
+import contextlib
 from typing import Any
 
-from .. import config, profiles
+from .. import config, live_browser, profiles
 from ..ratelimit import RateLimiter
 
 # browser-use drives headless Chromium; keep a step ceiling so a confused run can't
 # loop forever. Lower than the old 20 to cut the number of LLM calls per browse,
 # which keeps us comfortably under Groq's per-minute request limit.
 MAX_STEPS = 12
+
+# Match the live view's canvas so watch/take-control coordinates line up 1:1 with
+# what the agent's browser actually renders (see oli.live_browser.VIEWPORT).
+VIEWPORT = {"width": 1280, "height": 800}
 
 # Shared limiter: browse's per-step LLM calls are paced to Groq's request/min ceiling.
 _limiter = RateLimiter(config.settings.browser_max_rpm)
@@ -77,7 +82,7 @@ async def browse(goal: str, profile: str | None = None) -> str:
     pages. Credentials are never passed here — only the profile *name*.
     """
     try:
-        from browser_use import Agent
+        from browser_use import Agent, BrowserSession
     except Exception as e:  # noqa: BLE001
         return f"browse unavailable: could not import browser-use ({e})"
 
@@ -87,7 +92,7 @@ async def browse(goal: str, profile: str | None = None) -> str:
         return f"browse unavailable: could not build LLM adapter ({e})"
 
     # Resolve a persistent, authenticated profile if one was requested.
-    browser_profile = None
+    user_data_dir: str | None = None
     if profile:
         # A login window open for this profile holds its user-data dir; launching a
         # second (headless) browser on the same dir would fail. Refuse clearly.
@@ -102,13 +107,28 @@ async def browse(goal: str, profile: str | None = None) -> str:
                 f"browse: profile '{profile}' isn't logged in yet. Open the "
                 "🔐 Profiles panel and sign in once, then retry."
             )
-        browser_profile = profiles.build_profile(profile, headless=True)
+        pdir = profiles.profile_dir(profile)
+        pdir.mkdir(parents=True, exist_ok=True)
+        user_data_dir = str(pdir)
 
+    # We own the BrowserSession (rather than letting Agent create its own) so the
+    # live view can tap its screencast and the user can watch — and, via
+    # attach_agent, take control mid-run. Fixed viewport keeps take-control clicks
+    # aligned with the streamed frame.
+    session = await _start_session(BrowserSession, user_data_dir)
+    if session is None:
+        return "browse failed: could not start the browser."
+
+    live = live_browser.session()
+    attached = False
     try:
-        kwargs: dict[str, Any] = {"task": goal, "llm": llm}
-        if browser_profile is not None:
-            kwargs["browser_profile"] = browser_profile
-        agent: Any = Agent(**kwargs)
+        agent: Any = Agent(task=goal, llm=llm, browser_session=session)
+        # Best-effort tap: if a user is already driving their own live browser,
+        # attach_agent returns False and the run simply proceeds unwatched.
+        cdp_url = getattr(session, "cdp_url", None)
+        if cdp_url:
+            with contextlib.suppress(Exception):
+                attached = await live.attach_agent(cdp_url, agent)
         # Some versions accept max_steps on run(); tolerate signature differences.
         try:
             history = await agent.run(max_steps=MAX_STEPS)
@@ -117,6 +137,37 @@ async def browse(goal: str, profile: str | None = None) -> str:
         return _extract_result(history)
     except Exception as e:  # noqa: BLE001
         return f"browse failed: {e}"
+    finally:
+        if attached:
+            with contextlib.suppress(Exception):
+                await live.detach()
+        with contextlib.suppress(Exception):
+            await session.kill()
+
+
+async def _start_session(browser_session_cls: Any, user_data_dir: str | None) -> Any:
+    """Start a headless BrowserSession sized to the live viewport.
+
+    ``viewport`` is dropped on a retry because browser-use's accepted kwargs (and
+    their validation) have shifted across releases; an unsized session still streams
+    and runs fine. Any failure on the sized attempt therefore falls back to the
+    minimal set rather than aborting the browse.
+    """
+    base: dict[str, Any] = {"headless": True, "keep_alive": False}
+    if user_data_dir:
+        base["user_data_dir"] = user_data_dir
+    candidates = ({**base, "viewport": VIEWPORT}, base)
+    for i, kwargs in enumerate(candidates):
+        is_last = i == len(candidates) - 1
+        try:
+            session = browser_session_cls(**kwargs)
+            await session.start()
+            return session
+        except Exception:  # noqa: BLE001
+            if is_last:
+                return None
+            # Sized attempt failed (unknown/invalid kwarg) — retry minimally.
+    return None
 
 
 # Guard concurrent browse runs — one headless Chromium at a time keeps memory sane on a small VM.

@@ -9,7 +9,8 @@ to a profile *by name* — there is no field anywhere that a password flows thro
 Two halves live here:
 
 * Pure filesystem/browser helpers (``profile_dir``, ``has_cookies``,
-  ``build_profile``) used by the browse tool — no database, easy to test.
+  ``build_profile``) — the browse tool resolves a profile's user-data dir through
+  these; no database, easy to test.
 * ``ProfileManager`` — store-aware orchestration of the interactive login flow
   (open window → human logs in → save), used by the API layer.
 
