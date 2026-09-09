@@ -20,11 +20,15 @@ class RateLimiter:
         self.refill_per_sec = self.capacity / 60.0
         self.tokens = self.capacity
         self._last = time.monotonic()
-        self._lock = asyncio.Lock()
+        # Created lazily on first use so the lock always binds to the running loop
+        # (a RateLimiter instantiated at import time has no loop yet).
+        self._lock: asyncio.Lock | None = None
 
     async def acquire(self) -> None:
         if not self.enabled:
             return
+        if self._lock is None:
+            self._lock = asyncio.Lock()
         async with self._lock:
             now = time.monotonic()
             self.tokens = min(self.capacity, self.tokens + (now - self._last) * self.refill_per_sec)

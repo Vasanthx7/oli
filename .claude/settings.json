@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(terraform/terraform.tfvars)",
+      "Edit(terraform/terraform.tfvars)",
+      "Grep(terraform/terraform.tfvars)",
+      "Bash(cat terraform/terraform.tfvars*)",
+      "Bash(type terraform/terraform.tfvars*)",
+      "Bash(Get-Content terraform/terraform.tfvars*)"
+    ]
+  }
+}

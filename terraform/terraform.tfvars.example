@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values.
+# Never commit terraform.tfvars or terraform.tfstate* -- both contain secrets.
+
+aws_region     = "us-east-1"
+instance_type  = "t2.micro" # free-tier eligible
+
+ssh_public_key   = "ssh-ed25519 AAAA... you@yourmachine"
+allowed_ssh_cidr = "203.0.113.5/32" # your current public IP + /32
+
+duckdns_subdomain = "oli"                 # -> oli.duckdns.org
+duckdns_token     = "00000000-0000-0000-0000-000000000000"
+
+tailscale_authkey        = "tskey-auth-..."       # Tailscale admin console -> Settings -> Keys
+home_ollama_tailscale_ip = "100.x.y.z"            # `tailscale ip -4` on the home PC
+
+groq_api_key       = "gsk_..."
+postgres_password  = "generate-a-real-random-password"
+
+ghcr_username = "vasanthx7"
+ghcr_pat      = "ghp_..." # classic PAT, read:packages scope only

@@ -85,3 +85,32 @@ jobs:
       - name: Container logs on failure
         if: failure()
         run: docker logs oli
+
+  publish:
+    name: Publish image to GHCR
+    runs-on: ubuntu-latest
+    needs: [quality, container]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Owner is hardcoded lowercase: GHCR image names must be lowercase,
+          # and github.repository_owner preserves the GitHub casing (Vasanthx7).
+          tags: |
+            ghcr.io/vasanthx7/oli:latest
+            ghcr.io/vasanthx7/oli:${{ github.sha }}

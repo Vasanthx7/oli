@@ -1,0 +1,62 @@
+# Standalone production stack for AWS (not an overlay of docker-compose.yml —
+# self-contained so there's no dependency on docker compose's merge semantics).
+# Bring it up with:
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Differences from the dev stack (docker-compose.yml):
+#   - app runs a prebuilt image from GHCR instead of building locally (the tiny
+#     prod box never compiles Playwright/Chromium)
+#   - db and app do not publish ports to the host; only Caddy is public
+#   - a caddy service fronts the app with automatic HTTPS (see ./Caddyfile)
+#   - every service restarts on its own after a reboot or crash
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: oli
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: oli
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oli -d oli"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    image: ghcr.io/vasanthx7/oli:latest
+    restart: unless-stopped
+    env_file: .env  # GROQ_API_KEY, CHAT_*, POSTGRES_PASSWORD, etc.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://oli:${POSTGRES_PASSWORD}@db:5432/oli
+      HOST: 0.0.0.0
+      PORT: "8000"
+      ENVIRONMENT: production
+      LOG_JSON: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    env_file: .env  # DUCKDNS_DOMAIN
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

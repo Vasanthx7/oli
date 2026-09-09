@@ -249,7 +249,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [x] Phase C — Async SQLAlchemy + Alembic migrations, Postgres-ready (SQLite dev / Postgres+pgvector prod), docker-compose
 - [~] Phase D — Auth & multi-user SaaS — **deferred; single-user for now** (ADR 0008)
 - [x] Phase F — Docker + docker-compose (multi-stage image, verified in CI against Postgres)
-- [ ] Phase H — Deploy (free-tier first) + Terraform IaC + HTTPS
+- [~] Phase H — Deploy: single EC2 + Terraform IaC + Caddy auto-HTTPS (DuckDNS), chat routed to a home-PC Ollama over Tailscale — **written, not yet applied/verified** (see [ADR 0011](docs/adr/0011-deploy-to-aws.md), [RUNBOOK](docs/RUNBOOK.md#production-deploy-aws))
 - [x] Phase I — Observability: Prometheus metrics + /metrics, LangSmith tracing, JSON logs, Grafana stack (compose profile)
 - [x] Phase J — Portfolio polish: architecture diagram, runbook, CI badge, docs
 - [ ] Phase E — Background jobs (Arq + Redis) — optional for single-user; bundled with the post-restart Docker work

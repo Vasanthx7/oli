@@ -42,6 +42,58 @@ The app container runs `alembic upgrade head` on start, then serves on `:8000`.
 Build with `--build-arg INSTALL_CHROMIUM=true` if you need the browse tool in the
 image.
 
+## Production deploy (AWS)
+
+See [ADR 0011](adr/0011-deploy-to-aws.md) for the reasoning. Single EC2
+instance, docker-compose, Caddy auto-HTTPS via DuckDNS, chat routed to the
+operator's home-PC Ollama over Tailscale, browse on Groq.
+
+### One-time setup
+
+1. **Home PC**: install [Tailscale](https://tailscale.com/download), run
+   `tailscale ip -4` to get its tailnet IP. Run Ollama with `OLLAMA_HOST=0.0.0.0`
+   (it binds to localhost only by default) and allow the port through the
+   firewall for the Tailscale adapter.
+2. **DuckDNS**: sign up, create a subdomain, note the token.
+3. **GitHub**: create a classic PAT with only the `read:packages` scope (used
+   by the instance to pull the private image from GHCR).
+4. **Tailscale admin console**: generate a reusable auth key for the EC2 box.
+5. `cd terraform && cp terraform.tfvars.example terraform.tfvars`, fill in real
+   values (never commit this file — it's gitignored).
+6. `terraform init && terraform apply`. Note the `url` and `elastic_ip` outputs.
+7. Wait a minute or two for cloud-init to finish (Docker/Tailscale install +
+   first `docker compose up`), then open the `url` output.
+
+### Rolling out a new release
+
+CI (`.github/workflows/ci.yml`) builds and pushes `ghcr.io/vasanthx7/oli:latest`
+on every push to `main` that passes tests. Auto-deploy-on-push is **not** wired
+up (kept out of scope to limit blast radius) — after CI publishes:
+
+```bash
+ssh ubuntu@<elastic-ip>
+cd /opt/oli
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Migrations run automatically — the image's `CMD` runs `alembic upgrade head`
+before starting uvicorn.
+
+### Operating
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f app     # app logs
+docker compose -f docker-compose.prod.yml logs -f caddy    # cert/TLS issues
+docker compose -f docker-compose.prod.yml exec db psql -U oli -d oli
+```
+
+- `terraform destroy` tears everything down (no backups exist yet — see ADR
+  0011's deferred items — so this **deletes all conversation/memory data**).
+- If chat errors out, check Tailscale first: `tailscale status` on both the
+  instance and the home PC, and confirm Ollama is actually listening on
+  `0.0.0.0:11434` on the home PC.
+
 ## Database migrations
 
 ```bash
