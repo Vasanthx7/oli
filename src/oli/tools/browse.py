@@ -75,6 +75,14 @@ async def browse(goal: str, profile: str | None = None) -> str:
     # Resolve a persistent, authenticated profile if one was requested.
     browser_profile = None
     if profile:
+        # A login window open for this profile holds its user-data dir; launching a
+        # second (headless) browser on the same dir would fail. Refuse clearly.
+        mgr = profiles.active()
+        if mgr is not None and mgr.is_logging_in(profile):
+            return (
+                f"browse: a login window for '{profile}' is open. Finish or close "
+                "it in the 🔐 Profiles panel, then retry."
+            )
         if not profiles.has_cookies(profile):
             return (
                 f"browse: profile '{profile}' isn't logged in yet. Open the "
