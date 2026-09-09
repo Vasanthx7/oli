@@ -137,6 +137,11 @@
         <button id="live-start" class="primary">Start</button>
         <button id="live-stop" class="danger hidden">Stop &amp; save</button>
       </div>
+      <div id="live-agent-bar" class="hidden">
+        <span id="live-agent-note">🤖 Oli is browsing…</span>
+        <button id="live-take" class="primary" title="Pause Oli and drive the browser yourself">✋ Take control</button>
+        <button id="live-resume" class="hidden" title="Resume Oli from here">↩ Give back to Oli</button>
+      </div>
       <div id="live-stage">
         <canvas id="live-canvas" width="1280" height="800" tabindex="0"></canvas>
         <div id="live-placeholder">Press <strong>Start</strong> to open a live browser.</div>

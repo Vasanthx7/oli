@@ -77,6 +77,122 @@ def test_late_subscriber_gets_last_frame():
     assert q.get_nowait() == "current"
 
 
+# --- agent-watch / take-control (no browser needed) ----------------------
+
+
+class _FakeCDP:
+    """Records CDP calls so tests can assert on input gating and teardown."""
+
+    def __init__(self) -> None:
+        self.sends: list[tuple] = []
+
+    def on(self, *_a) -> None:
+        pass
+
+    async def send(self, method, params=None) -> None:
+        self.sends.append((method, params))
+
+    async def detach(self) -> None:
+        self.sends.append(("detach", None))
+
+
+class _FakeBrowser:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakePW:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class _FakeAgent:
+    def __init__(self) -> None:
+        self.paused = False
+        self.resumed = False
+
+    def pause(self) -> None:
+        self.paused = True
+
+    def resume(self) -> None:
+        self.resumed = True
+
+
+def _fake_attached(agent=None) -> LiveSession:
+    """A LiveSession wired into agent-watch mode without launching a browser."""
+    s = LiveSession()
+    s._cdp = _FakeCDP()
+    s._browser = _FakeBrowser()
+    s._pw = _FakePW()
+    s._owns_browser = False
+    s.agent_mode = True
+    s.controlled = False
+    s._agent = agent or _FakeAgent()
+    s.running = True
+    return s
+
+
+async def test_control_is_noop_when_not_watching():
+    s = LiveSession()  # idle, owned mode
+    assert await s.take_control() is False
+    assert await s.release_control() is False
+
+
+async def test_input_is_gated_until_control_taken():
+    """While watching, input is dropped; taking control lets it through."""
+    s = _fake_attached()
+
+    await s.dispatch({"kind": "mousedown", "xr": 0.5, "yr": 0.5, "button": "left"})
+    assert s._cdp.sends == []  # ignored — user hasn't taken control
+
+    assert await s.take_control() is True
+    assert s.controlled is True
+    await s.dispatch({"kind": "mousedown", "xr": 0.5, "yr": 0.5, "button": "left"})
+    assert any(m == "Input.dispatchMouseEvent" for m, _ in s._cdp.sends)
+
+
+async def test_take_and_release_pause_resume_the_agent():
+    agent = _FakeAgent()
+    s = _fake_attached(agent)
+
+    await s.take_control()
+    assert agent.paused is True and s.controlled is True
+
+    await s.release_control()
+    assert agent.resumed is True and s.controlled is False
+
+
+async def test_attach_is_refused_while_a_session_is_running():
+    s = LiveSession()
+    s.running = True  # a session (owned or attached) is already up
+    assert await s.attach_agent("ws://example/devtools/browser/x", _FakeAgent()) is False
+
+
+async def test_stop_in_agent_mode_detaches_without_owning_browser():
+    """A stop request while watching detaches our tap and resumes the agent."""
+    agent = _FakeAgent()
+    s = _fake_attached(agent)
+    s.controlled = True  # user had taken control
+
+    result = await s.stop()
+    assert result is None
+    assert s.running is False and s.agent_mode is False
+    assert s._browser is None  # detached
+    assert agent.resumed is True  # agent handed back before teardown
+
+
+def test_status_exposes_agent_fields():
+    st = LiveSession().status()
+    assert st["agent_mode"] is False
+    assert st["controlled"] is False
+
+
 # --- end-to-end (real headless Chromium) ---------------------------------
 
 

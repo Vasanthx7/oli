@@ -407,11 +407,31 @@ async def live_status():
 @app.post("/api/live/start")
 async def live_start(req: LiveStartRequest):
     """Launch the live browser (optionally bound to a profile) and start streaming."""
+    if live_browser.session().agent_mode:
+        raise HTTPException(
+            status_code=409,
+            detail="Oli is browsing right now — watch or take control instead of "
+            "starting a new session.",
+        )
     try:
         await live_browser.session().start(profile=req.profile, url=req.url)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
     return live_browser.session().status()
+
+
+@app.post("/api/live/control")
+async def live_control():
+    """Take control of a watched agent run: pause the agent, enable user input."""
+    ok = await live_browser.session().take_control()
+    return {"ok": ok, **live_browser.session().status()}
+
+
+@app.post("/api/live/release")
+async def live_release():
+    """Hand control back to the agent and resume the run."""
+    ok = await live_browser.session().release_control()
+    return {"ok": ok, **live_browser.session().status()}
 
 
 @app.post("/api/live/navigate")
