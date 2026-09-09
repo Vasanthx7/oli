@@ -57,6 +57,7 @@ src/oli/
   stt.py           speech-to-text via Groq Whisper
   scheduler.py     proactive scheduler: runs tasks on a schedule -> notifications
   profiles.py      persistent browser profiles: one-time human login -> reusable cookies
+  live_browser.py  live browser view: CDP screencast + input over a WebSocket
   tools/
     web_search.py  DuckDuckGo search
     web_fetch.py   fetch + extract clean article text
@@ -121,6 +122,25 @@ treated as a secret; on a shared host, restrict its permissions.)
 > PC). On a headless VM, either create the profile locally and copy the folder up,
 > or use the planned in-browser (noVNC) login flow. CAPTCHA and 2FA remain hard
 > stops for any automated browser — that's expected, not a bug.
+
+## Live browser (watch & drive)
+
+The **🖥 Live browser** panel streams a real browser running on the server into
+the UI — you see it live on a `<canvas>` and can click, scroll, and type into it.
+It uses the Chrome DevTools Protocol's **screencast** (JPEG frames over a
+WebSocket) with input sent back via CDP, so it runs **fully headless** — the same
+on your laptop and on a headless VM, no VNC/virtual-display stack.
+
+Its first job is **in-UI login for profiles**: pick a profile, press **Start**,
+log into the site yourself in the live view, then **Stop & save** — the
+authenticated session persists to the profile for the agent to reuse. This solves
+the "login needs a display" limitation of browser profiles on a headless VM, and
+still never exposes your password to the AI.
+
+This is **Level A** of a longer arc toward an Operator-style agent: next, agent
+`browse` runs become watchable with a *take-control* pause (A2); full desktop
+"computer use" (Level B) is future scope and would need a vision/GUI model beyond
+the text-only default (see [ADR 0009](docs/adr/0009-live-browser-via-cdp-screencast.md)).
 
 ## Long-term memory
 
@@ -208,3 +228,6 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [x] Phase I — Observability: Prometheus metrics + /metrics, LangSmith tracing, JSON logs, Grafana stack (compose profile)
 - [x] Phase J — Portfolio polish: architecture diagram, runbook, CI badge, docs
 - [ ] Phase E — Background jobs (Arq + Redis) — optional for single-user; bundled with the post-restart Docker work
+- [x] Phase K (Level A1) — Live browser: watch & drive a headless browser via CDP screencast; in-UI login for profiles (ADR 0009)
+- [ ] Phase K (Level A2) — Watch + take-control of agent `browse` runs
+- [ ] Level B (future) — Full computer use: virtual desktop + vision/GUI-grounding model

@@ -15,7 +15,15 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import structlog  # noqa: E402
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
+from fastapi import (  # noqa: E402
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import (  # noqa: E402
     FileResponse,
     JSONResponse,
@@ -25,7 +33,7 @@ from fastapi.responses import (  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from . import config, memory, metrics, profiles  # noqa: E402
+from . import config, live_browser, memory, metrics, profiles  # noqa: E402
 from .agent import run_turn  # noqa: E402
 from .db import dispose_engine, init_models  # noqa: E402
 from .logging_config import configure_logging, get_logger  # noqa: E402
@@ -66,6 +74,7 @@ async def lifespan(_app: FastAPI):
     finally:
         await scheduler.stop()
         await profile_manager.shutdown()
+        await live_browser.session().stop()
         await dispose_engine()
         log.info("shutdown")
 
@@ -138,6 +147,15 @@ class ScheduledTaskRequest(BaseModel):
 class ProfileRequest(BaseModel):
     label: str
     start_url: str = ""
+
+
+class LiveStartRequest(BaseModel):
+    profile: str | None = None
+    url: str | None = None
+
+
+class LiveNavigateRequest(BaseModel):
+    url: str
 
 
 # --- conversation endpoints ----------------------------------------------
@@ -359,6 +377,75 @@ async def finish_profile_login(name: str):
 async def delete_profile(name: str):
     await profile_manager.delete(name)
     return {"ok": True}
+
+
+# --- live browser (watch + drive a real browser) -------------------------
+
+
+@app.get("/api/live/status")
+async def live_status():
+    return live_browser.session().status()
+
+
+@app.post("/api/live/start")
+async def live_start(req: LiveStartRequest):
+    """Launch the live browser (optionally bound to a profile) and start streaming."""
+    try:
+        await live_browser.session().start(profile=req.profile, url=req.url)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+    return live_browser.session().status()
+
+
+@app.post("/api/live/navigate")
+async def live_navigate(req: LiveNavigateRequest):
+    await live_browser.session().navigate(req.url)
+    return live_browser.session().status()
+
+
+@app.post("/api/live/stop")
+async def live_stop():
+    """Stop the live browser; if it was bound to a profile, stamp the login time."""
+    profile = await live_browser.session().stop()
+    if profile:
+        # The persistent context flushed cookies on close — record the login.
+        await store.touch_profile_login(profile, time.time())
+    return {"ok": True, "profile": profile}
+
+
+@app.websocket("/api/live/ws")
+async def live_ws(ws: WebSocket):
+    """Bi-directional stream: JPEG frames out, mouse/keyboard events in."""
+    await ws.accept()
+    sess = live_browser.session()
+    queue = sess.subscribe()
+
+    async def pump_frames() -> None:
+        while True:
+            frame = await queue.get()
+            if frame is None:  # session stopped
+                break
+            await ws.send_json({"type": "frame", "data": frame})
+
+    async def pump_input() -> None:
+        while True:
+            event = await ws.receive_json()
+            await sess.dispatch(event)
+
+    frames_task = asyncio.create_task(pump_frames())
+    input_task = asyncio.create_task(pump_input())
+    try:
+        done, pending = await asyncio.wait(
+            {frames_task, input_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        frames_task.cancel()
+        input_task.cancel()
+        sess.unsubscribe(queue)
 
 
 # --- health checks -------------------------------------------------------
