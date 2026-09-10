@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Feature work is validated on its pull request (into dev), and the dev -> main
+  # PR re-validates the integrated state before release. So we don't run on every
+  # branch push — only on main (where the publish/deploy job below also fires).
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 jobs:
