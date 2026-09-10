@@ -122,7 +122,12 @@ async def browse(goal: str, profile: str | None = None) -> str:
     live = live_browser.session()
     attached = False
     try:
-        agent: Any = Agent(task=goal, llm=llm, browser_session=session)
+        # use_vision=False: the default browser model (Groq gpt-oss-120b) is
+        # text-only and rejects browser-use's multimodal message format
+        # ("messages[].content must be a string"). Text-only sends the DOM/AX
+        # tree as a string, which the model accepts. Set OLI vision only with a
+        # vision-capable browser model.
+        agent: Any = Agent(task=goal, llm=llm, browser_session=session, use_vision=False)
         # Best-effort tap: if a user is already driving their own live browser,
         # attach_agent returns False and the run simply proceeds unwatched.
         cdp_url = getattr(session, "cdp_url", None)
