@@ -34,20 +34,28 @@ feature/*  ──PR──▶  dev  ──PR (batched)──▶  main ──▶ d
 Rationale: batching feature merges through `dev` means `main` (and the deploy) fires
 far less often, and CI runs on the PR rather than on every feature-branch push.
 
-## CI
+## CI — local-first, release-boundary
 
-`.github/workflows/ci.yml` runs on **every pull request** and on **pushes to `main`**
-(not on feature-branch or `dev` pushes):
+Quality is **local-first**: the checks run on your machine via git hooks, and CI only
+runs them at the **`main` boundary** (a `dev` → `main` PR, or a push to `main`).
+**Feature → `dev` PRs run nothing in CI** — keep `dev` green with the local hooks.
 
-- A feature → `dev` PR runs CI on the feature; the `dev` → `main` PR re-runs CI on the
-  integrated `dev` state before release — so every merge is gated by a PR run without
-  paying an extra run on each `dev` push. `main` stays in `push` because the deploy
-  (`publish`) job triggers there.
+Local gate (`.pre-commit-config.yaml`) — install once per clone:
+```
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+- **on commit:** `ruff` (+ `--fix`), `ruff-format`, whitespace/yaml/toml/merge-conflict.
+- **on push:** `mypy src/oli`, `pytest` — the heavier gates, before code leaves your machine.
 
-
-- `quality` — `ruff check`, `ruff format --check`, `mypy src/oli`, `pytest`.
-- `container` — docker build + Postgres smoke test.
+CI (`.github/workflows/ci.yml`), triggers `push: [main]` + `pull_request`:
+- `quality` (`ruff check` / `ruff format --check` / `mypy` / `pytest`) and
+  `container` (docker build + Postgres smoke) — guarded to run only when
+  `github.event_name == 'push'` **or** `github.base_ref == 'main'` (i.e. main push or a
+  PR into `main`).
 - `publish` — build & push image to GHCR; **`main` only** (`github.ref == refs/heads/main`).
+
+Net effect: fast local feedback on the way to `dev`; the full suite + image smoke run
+once, at the release boundary, right before publish/deploy.
 
 ## Local dev commands
 
@@ -57,10 +65,11 @@ uv run ruff check .                 # lint
 uv run ruff format --check .        # format check (drop --check to fix)
 uv run mypy src/oli                 # type-check
 uv run pytest                       # tests (offline; conftest injects a dummy key + temp DB)
+uv run pre-commit run -a            # run the whole local gate by hand
 ```
 
-Pre-commit hooks are configured (`.pre-commit-config.yaml`) — run `uv run pre-commit run -a`
-before pushing to catch what CI checks.
+Since CI no longer runs on feature → `dev` PRs, **install the hooks** (command above) —
+they are what keeps `dev` green.
 
 ## Notes
 
