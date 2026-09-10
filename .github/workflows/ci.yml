@@ -1,9 +1,10 @@
 name: CI
 
 on:
-  # Feature work is validated on its pull request (into dev), and the dev -> main
-  # PR re-validates the integrated state before release. So we don't run on every
-  # branch push — only on main (where the publish/deploy job below also fires).
+  # CI only runs at the release boundary: pushes to main, and PRs targeting main
+  # (i.e. dev -> main). Feature -> dev PRs run nothing here — those are gated
+  # locally by pre-commit/pre-push (ruff/format on commit, mypy + pytest on push;
+  # see .pre-commit-config.yaml). main stays in push for the publish/deploy job.
   push:
     branches: [main]
   pull_request:
@@ -12,6 +13,8 @@ jobs:
   quality:
     name: Lint, type-check, test
     runs-on: ubuntu-latest
+    # Only at the main boundary: a push to main, or a PR whose base is main.
+    if: github.event_name == 'push' || github.base_ref == 'main'
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +50,8 @@ jobs:
   container:
     name: Build image + smoke test on Postgres
     runs-on: ubuntu-latest
+    # Same boundary as quality — the heavy image/DB smoke runs before a release.
+    if: github.event_name == 'push' || github.base_ref == 'main'
     services:
       db:
         image: pgvector/pgvector:pg16

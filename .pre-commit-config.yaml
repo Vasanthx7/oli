@@ -1,4 +1,13 @@
-# Fast checks that run before each commit. Heavier gates (mypy, tests) run in CI.
+# Local-first quality gate.
+#
+#   commit stage  -> fast, formatting-level checks (ruff, whitespace, syntax).
+#   push stage    -> the heavier gates that used to live in CI on every PR:
+#                    mypy + the full test suite. These run before code leaves
+#                    your machine, since CI only runs quality/container at the
+#                    dev -> main boundary now (see .github/workflows/ci.yml).
+#
+# One-time setup in each clone (installs BOTH hook types):
+#   uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.6
@@ -17,3 +26,22 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=1024]
+
+  # Heavier gates — run on `git push`, not on every commit. `language: system`
+  # runs them through the project's own uv env so imports/stubs resolve.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (src/oli)
+        entry: uv run mypy src/oli
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
