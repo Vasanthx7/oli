@@ -21,7 +21,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import SecretStr
 
-from . import memory, tools
+from . import intent, memory, tools
 from .config import settings
 from .personality import system_prompt
 
@@ -29,23 +29,39 @@ from .personality import system_prompt
 RECURSION_LIMIT = 16
 
 
-class State(TypedDict):
+class State(TypedDict, total=False):
+    # messages is the only required channel; intent is populated by the classify node.
     messages: Annotated[list[AnyMessage], add_messages]
+    intent: dict
 
 
-def build_model() -> ChatOpenAI:
+def build_model(model: str | None = None) -> ChatOpenAI:
     """Provider-agnostic chat model pointed at the configured chat endpoint.
 
     Uses the `chat_*` settings, which may target a local model (e.g. Ollama) while
     the browser tool stays on Groq — see ADR 0010. `api_key` is required by the
-    OpenAI client but is a dummy for local servers.
+    OpenAI client but is a dummy for local servers. `model` overrides which model id
+    to use on that same endpoint (the fast tier reuses this endpoint — see ADR 0014).
     """
     return ChatOpenAI(
-        model=settings.chat_model,
+        model=model or settings.chat_model,
         api_key=SecretStr(settings.chat_api_key or "local"),
         base_url=settings.chat_base_url,
         temperature=0.7,
+        # Emit token usage on the final streamed chunk so run_turn can record
+        # prompt/completion token metrics (off by default when streaming).
+        stream_usage=True,
     )
+
+
+def _use_reasoning_tier(intent: dict | None) -> bool:
+    """Route to the strong tier for hard or tool-needing turns; fast tier otherwise.
+
+    A missing/failed intent (None) routes to the strong tier — the safe default is to
+    not under-power a turn we couldn't classify."""
+    if not intent:
+        return True
+    return intent.get("complexity") == "hard" or bool(intent.get("needs_tools"))
 
 
 async def _recall_block(state_messages: list) -> str | None:
@@ -83,7 +99,19 @@ def get_graph():
 
 def _build():
     lc_tools = tools.langchain_tools()
-    model = build_model().bind_tools(lc_tools)
+    # Two tiers, bound once. Routing picks per turn from the classified intent.
+    fast_model = build_model(settings.chat_fast_model).bind_tools(lc_tools)
+    reasoning_model = build_model(settings.chat_model).bind_tools(lc_tools)
+
+    async def classify_node(state: State) -> dict:
+        # Tag the turn with a structured intent (best-effort; never raises).
+        last_human = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None
+        )
+        if last_human is None:
+            return {}
+        result = await intent.classify(str(last_human.content))
+        return {"intent": result.model_dump()}
 
     async def agent_node(state: State) -> dict:
         # System prompt + recalled memories are prepended per call, not stored in state.
@@ -92,13 +120,17 @@ def _build():
         if recall:
             prompt.append(SystemMessage(content=recall))
         prompt.extend(state["messages"])
+        # Route to the fast or strong tier based on this turn's intent.
+        model = reasoning_model if _use_reasoning_tier(state.get("intent")) else fast_model
         response = await model.ainvoke(prompt)
         return {"messages": [response]}
 
     graph = StateGraph(State)
+    graph.add_node("classify", classify_node)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", ToolNode(lc_tools))
-    graph.add_edge(START, "agent")
+    graph.add_edge(START, "classify")
+    graph.add_edge("classify", "agent")
     graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
     return graph.compile()
