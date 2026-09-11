@@ -16,6 +16,7 @@ def test_langchain_tools_have_expected_names_and_args():
 def test_graph_builds_with_react_shape():
     graph = get_graph()
     nodes = set(graph.get_graph().nodes)
-    assert {"agent", "tools"} <= nodes
+    # classify runs before the agent; the agent<->tools ReAct loop follows.
+    assert {"classify", "agent", "tools"} <= nodes
     # cached across calls
     assert get_graph() is graph

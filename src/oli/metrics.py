@@ -22,6 +22,9 @@ LLM_CALL_LATENCY = Histogram(
 )
 # Agent turn failures, keyed by exception class name (low-cardinality taxonomy).
 AGENT_ERRORS = Counter("oli_agent_errors_total", "Agent turn errors", ["type"])
+# Classified turn intents. category (chat|tools|browse|memory) x complexity
+# (simple|hard) = 8 series, so cardinality stays bounded.
+INTENTS = Counter("oli_intents_total", "Turn intents classified", ["category", "complexity"])
 
 
 def render() -> tuple[bytes, str]:

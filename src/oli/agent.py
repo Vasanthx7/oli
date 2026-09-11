@@ -25,7 +25,10 @@ from langgraph.errors import GraphRecursionError
 from . import memory, metrics
 from .agent_graph import RECURSION_LIMIT, get_graph
 from .llm import LLMClient
+from .logging_config import get_logger
 from .storage import Storage
+
+log = get_logger(__name__)
 
 # Tool results echoed to the UI are trimmed; the model still sees the full text.
 _TOOL_PREVIEW_LEN = 500
@@ -128,6 +131,11 @@ async def run_turn(
             config=config,
         ):
             kind = event["event"]
+            # Which graph node produced this event. The classify node makes its own
+            # LLM call; treat a missing node as the agent (keeps the fake-graph tests
+            # working) so only the classifier's calls are filtered out below.
+            node = (event.get("metadata") or {}).get("langgraph_node")
+            from_agent = node in (None, "agent")
 
             if kind == "on_chat_model_start":
                 run_id = event.get("run_id")
@@ -135,16 +143,28 @@ async def run_turn(
                     llm_starts[run_id] = time.perf_counter()
 
             elif kind == "on_chat_model_stream":
-                text = _text(event["data"]["chunk"].content)
-                if text:
-                    yield {"type": "token", "text": text}
+                # Only the agent's tokens go to the UI — never the classifier's.
+                if from_agent:
+                    text = _text(event["data"]["chunk"].content)
+                    if text:
+                        yield {"type": "token", "text": text}
 
             elif kind == "on_chat_model_end":
+                # Token/latency metrics count every model call (classify + agent).
                 _record_llm_metrics(event, llm_starts)
                 msg = event["data"]["output"]
-                # The message with no tool calls is the final answer.
-                if not getattr(msg, "tool_calls", None):
+                # The agent message with no tool calls is the final answer.
+                if from_agent and not getattr(msg, "tool_calls", None):
                     final_content = _text(msg.content)
+
+            elif kind == "on_chain_end" and event.get("name") == "classify":
+                intent = (event["data"].get("output") or {}).get("intent")
+                if intent:
+                    metrics.INTENTS.labels(
+                        category=intent["category"], complexity=intent["complexity"]
+                    ).inc()
+                    log.info("intent_classified", **intent)
+                    yield {"type": "intent", "intent": intent}
 
             elif kind == "on_tool_start":
                 metrics.TOOL_CALLS.labels(tool=event["name"]).inc()

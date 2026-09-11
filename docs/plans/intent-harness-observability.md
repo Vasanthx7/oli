@@ -1,6 +1,7 @@
 # Plan: Intent layer, agent harness & observability
 
-Status: **planned** (2026-09-11). Branch: `feature/intent-harness-observability` off `dev`.
+Status: **in progress** (2026-09-11). Branch: `feature/intent-harness-observability` off `dev`.
+Phase 1 ✅ done · Phase 2 ✅ done · Phase 3 ⏳ next.
 
 ## Motivation
 

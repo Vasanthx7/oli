@@ -21,7 +21,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import SecretStr
 
-from . import memory, tools
+from . import intent, memory, tools
 from .config import settings
 from .personality import system_prompt
 
@@ -29,8 +29,10 @@ from .personality import system_prompt
 RECURSION_LIMIT = 16
 
 
-class State(TypedDict):
+class State(TypedDict, total=False):
+    # messages is the only required channel; intent is populated by the classify node.
     messages: Annotated[list[AnyMessage], add_messages]
+    intent: dict
 
 
 def build_model() -> ChatOpenAI:
@@ -88,6 +90,16 @@ def _build():
     lc_tools = tools.langchain_tools()
     model = build_model().bind_tools(lc_tools)
 
+    async def classify_node(state: State) -> dict:
+        # Tag the turn with a structured intent (best-effort; never raises).
+        last_human = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None
+        )
+        if last_human is None:
+            return {}
+        result = await intent.classify(str(last_human.content))
+        return {"intent": result.model_dump()}
+
     async def agent_node(state: State) -> dict:
         # System prompt + recalled memories are prepended per call, not stored in state.
         prompt: list = [SystemMessage(content=system_prompt())]
@@ -99,9 +111,11 @@ def _build():
         return {"messages": [response]}
 
     graph = StateGraph(State)
+    graph.add_node("classify", classify_node)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", ToolNode(lc_tools))
-    graph.add_edge(START, "agent")
+    graph.add_edge(START, "classify")
+    graph.add_edge("classify", "agent")
     graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
     return graph.compile()
