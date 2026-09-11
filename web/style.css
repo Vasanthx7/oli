@@ -1,16 +1,20 @@
 :root {
-  --bg: #0e0f13;
-  --panel: #16181f;
-  --panel-2: #1c1f28;
-  --border: #262a35;
-  --text: #e6e8ee;
-  --muted: #8b90a0;
-  --accent: #7c5cff;
-  --accent-soft: #2a2350;
-  --user-bubble: #23262f;
-  --tool: #f0a500;
-  --danger: #ff5c6c;
-  --radius: 14px;
+  --bg: #f3efe6;
+  --panel: #fffdf8;
+  --panel-2: #ece6d7;
+  --border: #ddd6c5;
+  --text: #232323;
+  --muted: #7a7368;
+  --accent: #3a5a6b;
+  --accent-soft: #e4ebed;
+  --user-bubble: #d8cfb8;
+  --tool: #b8722f;
+  --ok: #5c8a63;
+  --danger: #a3453a;
+  --radius: 10px;
+  --live-bg: #232323;
+  --font-serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
   font-size: 15px;
 }
 
@@ -30,7 +34,7 @@ html, body {
 #sidebar {
   width: 260px;
   flex-shrink: 0;
-  background: var(--panel);
+  background: var(--panel-2);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -42,11 +46,11 @@ html, body {
   padding: 16px;
   border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 700; letter-spacing: 0.3px; }
+.brand { font-family: var(--font-serif); font-style: italic; font-weight: 700; letter-spacing: 0.2px; font-size: 17px; }
 .head-actions { display: flex; gap: 6px; align-items: center; }
 #new-chat, #bell-btn {
   background: var(--accent-soft);
-  color: var(--text);
+  color: var(--accent);
   border: none;
   border-radius: 8px;
   min-width: 30px; height: 30px;
@@ -55,7 +59,7 @@ html, body {
   position: relative;
   padding: 0 6px;
 }
-#new-chat:hover, #bell-btn:hover { background: var(--accent); }
+#new-chat:hover, #bell-btn:hover { background: var(--accent); color: #fff; }
 .badge {
   position: absolute;
   top: -6px; right: -6px;
@@ -72,15 +76,16 @@ html, body {
 #tasks-btn {
   margin: 8px 8px 0;
   padding: 10px 12px;
-  background: var(--panel-2);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
   cursor: pointer;
   font-size: 14px;
   text-align: left;
 }
-#tasks-btn:hover { border-color: var(--accent); }
+#tasks-btn:hover { background: var(--panel); border-bottom-color: var(--accent); }
 #conversation-list { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
 #conversation-list li {
   padding: 10px 12px;
@@ -95,8 +100,8 @@ html, body {
   justify-content: space-between;
   gap: 6px;
 }
-#conversation-list li:hover { background: var(--panel-2); color: var(--text); }
-#conversation-list li.active { background: var(--panel-2); color: var(--text); }
+#conversation-list li:hover { background: var(--panel); color: var(--text); }
+#conversation-list li.active { background: var(--panel); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 #conversation-list li .del {
   opacity: 0;
   color: var(--muted);
@@ -110,35 +115,37 @@ html, body {
 #memory-btn {
   margin: 8px 8px 0;
   padding: 10px 12px;
-  background: var(--panel-2);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
   cursor: pointer;
   font-size: 14px;
   text-align: left;
 }
-#memory-btn:hover { border-color: var(--accent); }
+#memory-btn:hover { background: var(--panel); border-bottom-color: var(--accent); }
 
 #profiles-btn, #live-btn {
   margin: 8px 8px 0;
   padding: 10px 12px;
-  background: var(--panel-2);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
   cursor: pointer;
   font-size: 14px;
   text-align: left;
 }
 #live-btn { margin-bottom: 8px; }
-#profiles-btn:hover, #live-btn:hover { border-color: var(--accent); }
+#profiles-btn:hover, #live-btn:hover { background: var(--panel); border-bottom-color: var(--accent); }
 
 /* --- memory modal --- */
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(35, 35, 35, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -156,13 +163,13 @@ html, body {
   padding: 20px;
 }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
-.modal-head h2 { font-size: 18px; margin: 0; }
+.modal-head h2 { font-family: var(--font-serif); font-size: 19px; margin: 0; font-weight: 700; }
 #memory-close { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
 #memory-close:hover { color: var(--text); }
 #memory-add { display: flex; gap: 8px; margin: 16px 0; }
 #memory-input {
   flex: 1;
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
@@ -192,7 +199,8 @@ html, body {
   line-height: 1.4;
 }
 #memory-list li .mem-source {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -204,7 +212,7 @@ html, body {
 /* --- tasks + notifications --- */
 #task-add { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
 #task-add input, #task-add textarea, #task-add select {
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
@@ -237,10 +245,10 @@ html, body {
 }
 .task-row-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .task-title { font-weight: 600; }
-.task-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.task-meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 .task-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .task-actions button {
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
@@ -256,7 +264,7 @@ html, body {
 .notif-title .notif-del { background: none; border: none; color: var(--muted); cursor: pointer; }
 .notif-title .notif-del:hover { color: var(--danger); }
 .notif-content { margin-top: 6px; line-height: 1.5; white-space: pre-wrap; }
-.notif-time { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.notif-time { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 6px; }
 .notif-error { border-left: 3px solid var(--danger); }
 #notif-list .notif-empty, #task-list .task-empty { color: var(--muted); text-align: center; border: none; }
 
@@ -272,7 +280,7 @@ html, body {
 #profile-add input {
   flex: 1;
   min-width: 140px;
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
@@ -301,12 +309,12 @@ html, body {
 .prof-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .prof-name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .prof-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-.prof-dot.on { background: #3ecf8e; }
+.prof-dot.on { background: var(--ok); }
 .prof-dot.pending { background: var(--tool); animation: blink 1s steps(2) infinite; }
-.prof-meta { font-size: 12px; color: var(--muted); margin-top: 4px; word-break: break-all; }
+.prof-meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-top: 4px; word-break: break-all; }
 .prof-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .prof-actions button {
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
@@ -322,7 +330,7 @@ html, body {
 .live-card { width: min(1000px, 96vw); }
 #live-controls { display: flex; gap: 8px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
 #live-controls select, #live-controls input {
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
@@ -333,7 +341,7 @@ html, body {
 #live-controls input { flex: 1; min-width: 160px; }
 #live-controls select:focus, #live-controls input:focus { border-color: var(--accent); }
 #live-controls button {
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 8px;
@@ -357,7 +365,7 @@ html, body {
 #live-agent-bar.hidden { display: none; }
 #live-agent-note { flex: 1; min-width: 160px; color: var(--text); font-weight: 600; }
 #live-agent-bar button {
-  background: var(--panel-2);
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 8px;
@@ -394,14 +402,25 @@ html, body {
   font-size: 14px;
 }
 #live-placeholder.hidden { display: none; }
-#live-status { font-size: 12px; color: var(--muted); margin-top: 10px; min-height: 16px; }
+#live-status {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--tool);
+  background: var(--live-bg);
+  margin-top: 10px;
+  min-height: 16px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  letter-spacing: 0.2px;
+}
+#live-status:empty { padding: 0; background: transparent; min-height: 0; }
 
 /* --- main --- */
-#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
 #messages { flex: 1; overflow-y: auto; padding: 24px 0; }
 
 .empty-state { text-align: center; margin: auto; padding: 60px 20px; color: var(--muted); }
-.empty-state h1 { font-size: 40px; margin: 0 0 8px; color: var(--text); }
+.empty-state h1 { font-family: var(--font-serif); font-style: italic; font-size: 42px; margin: 0 0 8px; color: var(--text); font-weight: 700; }
 .suggestions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 24px; }
 .suggestion {
   background: var(--panel);
@@ -412,7 +431,7 @@ html, body {
   cursor: pointer;
   font-size: 13px;
 }
-.suggestion:hover { border-color: var(--accent); }
+.suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
 .msg { max-width: 760px; margin: 0 auto 20px; padding: 0 24px; display: flex; gap: 14px; }
 .msg .avatar {
@@ -420,7 +439,7 @@ html, body {
   display: flex; align-items: center; justify-content: center; font-size: 14px;
 }
 .msg.user .avatar { background: var(--user-bubble); }
-.msg.assistant .avatar { background: var(--accent); }
+.msg.assistant .avatar { background: var(--accent); color: #fff; }
 .msg .body { flex: 1; min-width: 0; line-height: 1.6; }
 .msg .body p { margin: 0 0 10px; }
 .msg .body pre {
@@ -430,7 +449,7 @@ html, body {
   padding: 12px;
   overflow-x: auto;
 }
-.msg .body code { font-family: "SF Mono", Consolas, monospace; font-size: 13px; }
+.msg .body code { font-family: var(--font-mono); font-size: 13px; }
 .msg .body p code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
 .msg .body a { color: var(--accent); }
 
@@ -444,16 +463,18 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--tool);
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 13px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--tool);
+  border-radius: 0;
+  padding: 4px 0 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   color: var(--muted);
   margin: 4px 0;
+  letter-spacing: 0.1px;
 }
-.tool-chip.done { border-left-color: #3ecf8e; }
+.tool-chip.done { border-left-color: var(--ok); }
 .tool-chip .spin {
   width: 12px; height: 12px;
   border: 2px solid var(--border);
@@ -518,15 +539,16 @@ html, body {
   flex-shrink: 0;
 }
 #mic:hover { border-color: var(--accent); }
-#mic.recording { background: var(--danger); border-color: var(--danger); animation: pulse 1.2s ease-in-out infinite; }
-#mic.active { background: var(--accent-soft); border-color: var(--accent); }
+#mic.recording { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+#mic.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 @keyframes pulse { 50% { opacity: 0.55; } }
 
 #voice-status {
   max-width: 808px;
   margin: -8px auto 8px;
   padding: 0 24px;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   color: var(--muted);
   text-align: center;
 }
