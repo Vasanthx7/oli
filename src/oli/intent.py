@@ -70,14 +70,15 @@ _classifier = None
 
 
 def get_classifier():
-    """Lazy singleton: a fast-tier model constrained to emit an `Intent`.
+    """Lazy singleton: the fast-tier model constrained to emit an `Intent`.
 
-    Uses the chat endpoint (the fast tier once Phase 3 splits tiers). Constructed
+    Uses the fast tier (`chat_fast_model`) on the chat endpoint — classification is a
+    cheap, high-volume pre-pass, so it should never burn the strong model. Constructed
     lazily so importing this module needs no API key (matches the graph's pattern)."""
     global _classifier
     if _classifier is None:
         model = ChatOpenAI(
-            model=settings.chat_model,
+            model=settings.chat_fast_model,
             api_key=SecretStr(settings.chat_api_key or "local"),
             base_url=settings.chat_base_url,
             temperature=0,

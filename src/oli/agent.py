@@ -24,6 +24,7 @@ from langgraph.errors import GraphRecursionError
 
 from . import memory, metrics
 from .agent_graph import RECURSION_LIMIT, get_graph
+from .config import settings
 from .llm import LLMClient
 from .logging_config import get_logger
 from .storage import Storage
@@ -32,6 +33,16 @@ log = get_logger(__name__)
 
 # Tool results echoed to the UI are trimmed; the model still sees the full text.
 _TOOL_PREVIEW_LEN = 500
+
+# User-facing note when a per-turn guardrail (see config) cuts a turn short.
+_GUARDRAIL_MESSAGES = {
+    "max_tool_calls": (
+        "I stopped after reaching this turn's tool-use limit. Here's what I have so far."
+    ),
+    "token_budget": (
+        "I stopped after reaching this turn's token budget. Here's what I have so far."
+    ),
+}
 
 
 def _current_request_id() -> str | None:
@@ -43,8 +54,8 @@ def _current_request_id() -> str | None:
     return structlog.contextvars.get_contextvars().get("request_id")
 
 
-def _record_llm_metrics(event: dict, starts: dict[str, float]) -> None:
-    """Record per-LLM-call latency + token usage from an on_chat_model_end event.
+def _record_llm_metrics(event: dict, starts: dict[str, float]) -> int:
+    """Record per-LLM-call latency + token usage; return this call's total tokens.
 
     Defensive on every field: the fake graph in tests emits minimal events with no
     run_id/metadata/usage, and real usage is absent unless stream_usage is on."""
@@ -55,10 +66,13 @@ def _record_llm_metrics(event: dict, starts: dict[str, float]) -> None:
         metrics.LLM_CALL_LATENCY.labels(model=model).observe(time.perf_counter() - start)
     output = event.get("data", {}).get("output")
     usage = getattr(output, "usage_metadata", None) or {}
-    if usage.get("input_tokens"):
-        metrics.LLM_TOKENS.labels(kind="prompt", model=model).inc(usage["input_tokens"])
-    if usage.get("output_tokens"):
-        metrics.LLM_TOKENS.labels(kind="completion", model=model).inc(usage["output_tokens"])
+    prompt_tokens = usage.get("input_tokens") or 0
+    completion_tokens = usage.get("output_tokens") or 0
+    if prompt_tokens:
+        metrics.LLM_TOKENS.labels(kind="prompt", model=model).inc(prompt_tokens)
+    if completion_tokens:
+        metrics.LLM_TOKENS.labels(kind="completion", model=model).inc(completion_tokens)
+    return prompt_tokens + completion_tokens
 
 
 # Keep references to fire-and-forget extraction tasks so they aren't GC'd mid-run.
@@ -118,6 +132,14 @@ async def run_turn(
     # perf_counter start per LLM run_id, to time each chat-model call.
     llm_starts: dict[str, float] = {}
 
+    # Per-turn guardrails (see config): cap tool calls and total tokens; a hit ends
+    # the turn gracefully. stop_reason is the guardrail that fired, if any.
+    max_tool_calls = settings.max_tool_calls_per_turn
+    token_budget = settings.per_turn_token_budget
+    tool_calls_made = 0
+    tokens_used = 0
+    stop_reason: str | None = None
+
     # Correlate the LangSmith trace with this turn's logs via the request id.
     config: dict = {"recursion_limit": RECURSION_LIMIT}
     request_id = _current_request_id()
@@ -125,64 +147,77 @@ async def run_turn(
         config["metadata"] = {"request_id": request_id}
 
     try:
-        async for event in graph.astream_events(
-            {"messages": seed},
-            version="v2",
-            config=config,
-        ):
-            kind = event["event"]
-            # Which graph node produced this event. The classify node makes its own
-            # LLM call; treat a missing node as the agent (keeps the fake-graph tests
-            # working) so only the classifier's calls are filtered out below.
-            node = (event.get("metadata") or {}).get("langgraph_node")
-            from_agent = node in (None, "agent")
+        stream = graph.astream_events({"messages": seed}, version="v2", config=config)
+        try:
+            async for event in stream:
+                kind = event["event"]
+                # Which graph node produced this event. The classify node makes its own
+                # LLM call; treat a missing node as the agent (keeps the fake-graph tests
+                # working) so only the classifier's calls are filtered out below.
+                node = (event.get("metadata") or {}).get("langgraph_node")
+                from_agent = node in (None, "agent")
 
-            if kind == "on_chat_model_start":
-                run_id = event.get("run_id")
-                if run_id:
-                    llm_starts[run_id] = time.perf_counter()
+                if kind == "on_chat_model_start":
+                    run_id = event.get("run_id")
+                    if run_id:
+                        llm_starts[run_id] = time.perf_counter()
 
-            elif kind == "on_chat_model_stream":
-                # Only the agent's tokens go to the UI — never the classifier's.
-                if from_agent:
-                    text = _text(event["data"]["chunk"].content)
-                    if text:
-                        yield {"type": "token", "text": text}
+                elif kind == "on_chat_model_stream":
+                    # Only the agent's tokens go to the UI — never the classifier's.
+                    if from_agent:
+                        text = _text(event["data"]["chunk"].content)
+                        if text:
+                            yield {"type": "token", "text": text}
 
-            elif kind == "on_chat_model_end":
-                # Token/latency metrics count every model call (classify + agent).
-                _record_llm_metrics(event, llm_starts)
-                msg = event["data"]["output"]
-                # The agent message with no tool calls is the final answer.
-                if from_agent and not getattr(msg, "tool_calls", None):
-                    final_content = _text(msg.content)
+                elif kind == "on_chat_model_end":
+                    # Token/latency metrics count every model call (classify + agent).
+                    tokens_used += _record_llm_metrics(event, llm_starts)
+                    msg = event["data"]["output"]
+                    # The agent message with no tool calls is the final answer.
+                    if from_agent and not getattr(msg, "tool_calls", None):
+                        final_content = _text(msg.content)
+                    if token_budget and tokens_used >= token_budget:
+                        stop_reason = "token_budget"
 
-            elif kind == "on_chain_end" and event.get("name") == "classify":
-                intent = (event["data"].get("output") or {}).get("intent")
-                if intent:
-                    metrics.INTENTS.labels(
-                        category=intent["category"], complexity=intent["complexity"]
-                    ).inc()
-                    log.info("intent_classified", **intent)
-                    yield {"type": "intent", "intent": intent}
+                elif kind == "on_chain_end" and event.get("name") == "classify":
+                    intent = (event["data"].get("output") or {}).get("intent")
+                    if intent:
+                        metrics.INTENTS.labels(
+                            category=intent["category"], complexity=intent["complexity"]
+                        ).inc()
+                        log.info("intent_classified", **intent)
+                        yield {"type": "intent", "intent": intent}
 
-            elif kind == "on_tool_start":
-                metrics.TOOL_CALLS.labels(tool=event["name"]).inc()
-                yield {
-                    "type": "tool_start",
-                    "name": event["name"],
-                    "args": event["data"].get("input", {}),
-                }
+                elif kind == "on_tool_start":
+                    metrics.TOOL_CALLS.labels(tool=event["name"]).inc()
+                    tool_calls_made += 1
+                    yield {
+                        "type": "tool_start",
+                        "name": event["name"],
+                        "args": event["data"].get("input", {}),
+                    }
 
-            elif kind == "on_tool_end":
-                output = event["data"].get("output")
-                result = _text(getattr(output, "content", output))
-                await store.add_message(conversation_id, "tool", result, tool_name=event["name"])
-                yield {
-                    "type": "tool_end",
-                    "name": event["name"],
-                    "result": result[:_TOOL_PREVIEW_LEN],
-                }
+                elif kind == "on_tool_end":
+                    output = event["data"].get("output")
+                    result = _text(getattr(output, "content", output))
+                    await store.add_message(
+                        conversation_id, "tool", result, tool_name=event["name"]
+                    )
+                    yield {
+                        "type": "tool_end",
+                        "name": event["name"],
+                        "result": result[:_TOOL_PREVIEW_LEN],
+                    }
+                    if max_tool_calls and tool_calls_made >= max_tool_calls:
+                        stop_reason = "max_tool_calls"
+
+                if stop_reason:
+                    break
+        finally:
+            # Breaking mid-stream leaves the graph suspended; close it explicitly.
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     except GraphRecursionError:
         metrics.AGENT_ERRORS.labels(type="GraphRecursionError").inc()
@@ -193,6 +228,11 @@ async def run_turn(
         metrics.AGENT_ERRORS.labels(type=type(e).__name__).inc()
         yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
         return
+
+    if stop_reason:
+        metrics.GUARDRAIL_STOPS.labels(kind=stop_reason).inc()
+        log.info("guardrail_stop", kind=stop_reason, tool_calls=tool_calls_made, tokens=tokens_used)
+        final_content = final_content or _GUARDRAIL_MESSAGES[stop_reason]
 
     await store.add_message(conversation_id, "assistant", final_content)
     _spawn_extraction(conversation_id, user_message, final_content)

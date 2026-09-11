@@ -21,3 +21,4 @@ Format follows [Michael Nygard's ADR template](https://cognitect.com/blog/2011/1
 | [0011](0011-watch-and-take-control-of-agent-browse.md) | Watch (and take control of) an autonomous browse | Accepted |
 | [0012](0012-deploy-to-aws.md) | Deploy to AWS: single EC2 instance, home Ollama over Tailscale | Accepted |
 | [0013](0013-intent-classification-stage.md) | Intent classification stage before the agent | Accepted |
+| [0014](0014-model-routing-and-harness-guardrails.md) | Cheap/strong model routing + per-turn harness guardrails | Accepted |

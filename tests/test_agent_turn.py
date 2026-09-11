@@ -147,6 +147,67 @@ async def test_classifier_tokens_are_not_streamed_to_ui(monkeypatch):
     assert tokens == "Hello"  # classifier JSON never leaked
 
 
+async def test_max_tool_calls_guardrail_stops_turn(monkeypatch):
+    monkeypatch.setattr(agent.settings, "max_tool_calls_per_turn", 1)
+    events = [
+        {"event": "on_tool_start", "name": "web_search", "data": {"input": {"query": "x"}}},
+        {
+            "event": "on_tool_end",
+            "name": "web_search",
+            "data": {"output": SimpleNamespace(content="result one")},
+        },
+        # The graph would run a second tool; the guardrail must stop before this.
+        {"event": "on_tool_start", "name": "web_search", "data": {"input": {"query": "y"}}},
+    ]
+    monkeypatch.setattr(agent, "get_graph", lambda: _FakeGraph(events))
+
+    before = (
+        REGISTRY.get_sample_value("oli_guardrail_stops_total", {"kind": "max_tool_calls"}) or 0.0
+    )
+
+    store = Storage()
+    cid = await store.create_conversation()
+    out = await _collect(store, cid, "do a lot")
+
+    done = next(e for e in out if e["type"] == "done")
+    assert "tool-use limit" in done["content"]
+    # Only the first tool ran; the second start was never processed.
+    assert sum(1 for e in out if e["type"] == "tool_start") == 1
+    assert (
+        REGISTRY.get_sample_value("oli_guardrail_stops_total", {"kind": "max_tool_calls"})
+        == before + 1
+    )
+
+
+async def test_token_budget_guardrail_stops_turn(monkeypatch):
+    monkeypatch.setattr(agent.settings, "per_turn_token_budget", 5)
+    events = [
+        {
+            "event": "on_chat_model_end",
+            "data": {
+                "output": SimpleNamespace(
+                    content="thinking",
+                    tool_calls=[{"name": "web_search"}],
+                    usage_metadata={"input_tokens": 10, "output_tokens": 0},
+                )
+            },
+        },
+        # Would continue, but the 10-token call already blew the 5-token budget.
+        {
+            "event": "on_chat_model_end",
+            "data": {"output": SimpleNamespace(content="more", tool_calls=[])},
+        },
+    ]
+    monkeypatch.setattr(agent, "get_graph", lambda: _FakeGraph(events))
+
+    store = Storage()
+    cid = await store.create_conversation()
+    out = await _collect(store, cid, "expensive")
+
+    done = next(e for e in out if e["type"] == "done")
+    assert "token budget" in done["content"]
+
+
 async def test_run_once_raises_on_error(monkeypatch):
     events = [
         {

@@ -56,11 +56,19 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str = "openai/gpt-oss-120b"
 
-    # Chat / reasoning model (LangGraph agent + memory extraction). Empty fields
-    # inherit from groq_* below, so a pure-Groq setup needs no extra config.
+    # Chat / reasoning model (LangGraph agent + memory extraction) — the strong tier.
+    # Empty fields inherit from groq_* below, so a pure-Groq setup needs no extra config.
     chat_base_url: str = ""
     chat_api_key: str = ""
     chat_model: str = ""
+
+    # Fast tier: a cheaper/faster model used for the intent classifier and for simple
+    # chat turns (routing picks it when intent is simple and needs no tools — see
+    # agent_graph). Uses the same endpoint/key as chat_*. On a hybrid-local setup
+    # (chat_* pointed at Ollama), set this to a small LOCAL model — the default
+    # llama-3.1-8b-instant only exists on Groq. Set equal to chat_model to disable
+    # tiering (one model for everything).
+    chat_fast_model: str = "llama-3.1-8b-instant"
 
     # Browser (browser-use) model. Kept on Groq by default even when chat is local,
     # because driving a browser needs a strong model.
@@ -74,6 +82,17 @@ class Settings(BaseSettings):
 
     # Speech-to-text (Groq Whisper). turbo is fast + cheap; large-v3 is most accurate.
     stt_model: str = "whisper-large-v3-turbo"
+
+    # --- Agent harness guardrails (per-turn safety rails beyond RECURSION_LIMIT) ---
+    # Max tool executions in a single turn; hitting it ends the turn gracefully.
+    max_tool_calls_per_turn: int = 8
+    # Per-turn ceiling on total LLM tokens (prompt+completion); 0 = disabled. Ends the
+    # turn gracefully once exceeded, so a pathological loop can't burn unbounded tokens.
+    per_turn_token_budget: int = 0
+    # Hard timeout on a single tool call in seconds; 0 = disabled. Generous by default
+    # so browse (bounded internally by MAX_STEPS) isn't cut short, while still capping
+    # a truly hung tool.
+    tool_timeout_seconds: int = 180
 
     # --- Server ---
     host: str = "127.0.0.1"
@@ -126,6 +145,7 @@ GROQ_MODEL = settings.groq_model
 CHAT_BASE_URL = settings.chat_base_url
 CHAT_API_KEY = settings.chat_api_key
 CHAT_MODEL = settings.chat_model
+CHAT_FAST_MODEL = settings.chat_fast_model
 BROWSER_BASE_URL = settings.browser_base_url
 BROWSER_API_KEY = settings.browser_api_key
 BROWSER_MODEL = settings.browser_model

@@ -25,6 +25,10 @@ AGENT_ERRORS = Counter("oli_agent_errors_total", "Agent turn errors", ["type"])
 # Classified turn intents. category (chat|tools|browse|memory) x complexity
 # (simple|hard) = 8 series, so cardinality stays bounded.
 INTENTS = Counter("oli_intents_total", "Turn intents classified", ["category", "complexity"])
+# Turns cut short by a harness guardrail. kind = max_tool_calls | token_budget.
+GUARDRAIL_STOPS = Counter(
+    "oli_guardrail_stops_total", "Turns ended early by a harness guardrail", ["kind"]
+)
 
 
 def render() -> tuple[bytes, str]:

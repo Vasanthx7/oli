@@ -1,7 +1,7 @@
 # Plan: Intent layer, agent harness & observability
 
-Status: **in progress** (2026-09-11). Branch: `feature/intent-harness-observability` off `dev`.
-Phase 1 ✅ done · Phase 2 ✅ done · Phase 3 ⏳ next.
+Status: **complete** (2026-09-11). Branch: `feature/intent-harness-observability` off `dev`.
+Phase 1 ✅ done · Phase 2 ✅ done · Phase 3 ✅ done. ADRs 0013 (intent) + 0014 (routing/guardrails).
 
 ## Motivation
 
@@ -84,9 +84,19 @@ its own commit + tests + (where notable) an ADR, and its own PR into `dev`.
 - Tool-call **repair/retry** loop (feed errors back for self-correction) — deferred.
 - Intent **clarification** questions and multi-step **planner/decomposer** — deferred.
 
-## Model tiers (defaults)
+## Model tiers (as implemented — ADR 0014)
 
-| Tier      | Setting                 | Default                  | Used for                          |
-|-----------|-------------------------|--------------------------|-----------------------------------|
-| Fast      | `chat_model`            | `llama-3.1-8b-instant`   | chat, intent classification       |
-| Frontier  | `chat_reasoning_model`  | `openai/gpt-oss-120b`    | `complexity=hard` / tool-heavy    |
+To avoid disrupting the hybrid-local story (ADR 0010, where `chat_model` points at a
+local Ollama), `chat_model` was kept as the **strong** tier and a new `chat_fast_model`
+added, rather than renaming `chat_model` to the fast tier as first sketched.
+
+| Tier    | Setting           | Default                | Used for                                  |
+|---------|-------------------|------------------------|-------------------------------------------|
+| Fast    | `chat_fast_model` | `llama-3.1-8b-instant` | intent classification + simple chat turns |
+| Strong  | `chat_model`      | `openai/gpt-oss-120b`  | `complexity=hard` / tool-needing turns    |
+
+## Guardrails (as implemented — ADR 0014)
+
+- `max_tool_calls_per_turn` (default 8), `per_turn_token_budget` (default 0 = off),
+  `tool_timeout_seconds` (default 180, 0 = off). A stop increments
+  `oli_guardrail_stops_total{kind}` and ends the turn with a short note.
