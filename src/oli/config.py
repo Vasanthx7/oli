@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     def is_postgres(self) -> bool:
         return self.database_url.startswith("postgresql")
 
+    @property
+    def tracing_enabled(self) -> bool:
+        """LangSmith tracing is on when a key is present (or explicitly flagged).
+
+        Setting LANGSMITH_API_KEY alone turns tracing on — no separate flag needed.
+        With no key it stays off, so tests/CI remain fully offline. To disable while
+        a key is present, leave the key unset."""
+        return self.langsmith_tracing or bool(self.langsmith_api_key)
+
     def require_api_key(self) -> str:
         """Return the LLM API key or raise a clear error if it is missing."""
         if not self.groq_api_key:

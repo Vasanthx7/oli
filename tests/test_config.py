@@ -49,3 +49,20 @@ def test_hybrid_overrides_chat_only():
     assert s.browser_base_url == "https://groq"
     assert s.browser_model == "big-model"
     assert s.browser_api_key == "gk"
+
+
+def test_tracing_off_without_key():
+    # No LangSmith key and no explicit flag → tracing stays off (offline default).
+    s = Settings(langsmith_api_key="", langsmith_tracing=False, _env_file=None)
+    assert s.tracing_enabled is False
+
+
+def test_tracing_on_when_key_present():
+    # A key alone turns tracing on — no separate flag needed.
+    s = Settings(langsmith_api_key="ls-key", langsmith_tracing=False, _env_file=None)
+    assert s.tracing_enabled is True
+
+
+def test_tracing_on_when_explicitly_flagged():
+    s = Settings(langsmith_api_key="", langsmith_tracing=True, _env_file=None)
+    assert s.tracing_enabled is True

@@ -45,6 +45,9 @@ def build_model() -> ChatOpenAI:
         api_key=SecretStr(settings.chat_api_key or "local"),
         base_url=settings.chat_base_url,
         temperature=0.7,
+        # Emit token usage on the final streamed chunk so run_turn can record
+        # prompt/completion token metrics (off by default when streaming).
+        stream_usage=True,
     )
 
 

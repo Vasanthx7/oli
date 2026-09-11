@@ -15,8 +15,10 @@ messages for the UI/history, and extracting durable memories after the turn.
 """
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator
 
+import structlog
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 
@@ -27,6 +29,34 @@ from .storage import Storage
 
 # Tool results echoed to the UI are trimmed; the model still sees the full text.
 _TOOL_PREVIEW_LEN = 500
+
+
+def _current_request_id() -> str | None:
+    """The request id bound by the HTTP middleware, if this turn runs in a request.
+
+    Threaded into the LangGraph run's trace metadata so a LangSmith trace can be
+    correlated back to the structured logs for the same turn. Scheduler-driven
+    turns run outside a request and simply have none."""
+    return structlog.contextvars.get_contextvars().get("request_id")
+
+
+def _record_llm_metrics(event: dict, starts: dict[str, float]) -> None:
+    """Record per-LLM-call latency + token usage from an on_chat_model_end event.
+
+    Defensive on every field: the fake graph in tests emits minimal events with no
+    run_id/metadata/usage, and real usage is absent unless stream_usage is on."""
+    model = (event.get("metadata") or {}).get("ls_model_name") or "unknown"
+    run_id = event.get("run_id")
+    start = starts.pop(run_id, None) if run_id else None
+    if start is not None:
+        metrics.LLM_CALL_LATENCY.labels(model=model).observe(time.perf_counter() - start)
+    output = event.get("data", {}).get("output")
+    usage = getattr(output, "usage_metadata", None) or {}
+    if usage.get("input_tokens"):
+        metrics.LLM_TOKENS.labels(kind="prompt", model=model).inc(usage["input_tokens"])
+    if usage.get("output_tokens"):
+        metrics.LLM_TOKENS.labels(kind="completion", model=model).inc(usage["output_tokens"])
+
 
 # Keep references to fire-and-forget extraction tasks so they aren't GC'd mid-run.
 _background_tasks: set = set()
@@ -82,21 +112,35 @@ async def run_turn(
 
     graph = get_graph()
     final_content = ""
+    # perf_counter start per LLM run_id, to time each chat-model call.
+    llm_starts: dict[str, float] = {}
+
+    # Correlate the LangSmith trace with this turn's logs via the request id.
+    config: dict = {"recursion_limit": RECURSION_LIMIT}
+    request_id = _current_request_id()
+    if request_id:
+        config["metadata"] = {"request_id": request_id}
 
     try:
         async for event in graph.astream_events(
             {"messages": seed},
             version="v2",
-            config={"recursion_limit": RECURSION_LIMIT},
+            config=config,
         ):
             kind = event["event"]
 
-            if kind == "on_chat_model_stream":
+            if kind == "on_chat_model_start":
+                run_id = event.get("run_id")
+                if run_id:
+                    llm_starts[run_id] = time.perf_counter()
+
+            elif kind == "on_chat_model_stream":
                 text = _text(event["data"]["chunk"].content)
                 if text:
                     yield {"type": "token", "text": text}
 
             elif kind == "on_chat_model_end":
+                _record_llm_metrics(event, llm_starts)
                 msg = event["data"]["output"]
                 # The message with no tool calls is the final answer.
                 if not getattr(msg, "tool_calls", None):
@@ -121,10 +165,12 @@ async def run_turn(
                 }
 
     except GraphRecursionError:
+        metrics.AGENT_ERRORS.labels(type="GraphRecursionError").inc()
         final_content = final_content or (
             "I reached the tool-use limit before finishing. Here's what I have so far."
         )
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI cleanly
+        metrics.AGENT_ERRORS.labels(type=type(e).__name__).inc()
         yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
         return
 
