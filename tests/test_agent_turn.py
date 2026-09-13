@@ -208,6 +208,61 @@ async def test_token_budget_guardrail_stops_turn(monkeypatch):
     assert "token budget" in done["content"]
 
 
+async def test_fallback_provider_emits_notice_once(monkeypatch):
+    from oli.config import settings
+
+    # Two providers keyed so the mistral model id is recognised as a non-primary one.
+    monkeypatch.setattr(settings, "mistral_api_key", "mk")
+    events = [
+        # Two agent calls both answered by the fallback provider (mistral).
+        {
+            "event": "on_chat_model_end",
+            "metadata": {"ls_model_name": settings.mistral_model},
+            "data": {"output": SimpleNamespace(content="", tool_calls=[object()])},
+        },
+        {
+            "event": "on_chat_model_end",
+            "metadata": {"ls_model_name": settings.mistral_model},
+            "data": {"output": SimpleNamespace(content="done", tool_calls=[])},
+        },
+    ]
+    monkeypatch.setattr(agent, "get_graph", lambda: _FakeGraph(events))
+
+    store = Storage()
+    cid = await store.create_conversation()
+    out = await _collect(store, cid, "hi")
+
+    notices = [e for e in out if e["type"] == "notice"]
+    assert len(notices) == 1  # emitted once even though both calls used the fallback
+    assert "mistral" in notices[0]["message"].lower()
+
+
+async def test_all_providers_down_shows_friendly_error(monkeypatch):
+    async def boom(_inputs, **_kwargs):
+        raise _FakeConnError("connection refused")
+        yield  # pragma: no cover
+
+    fake = _FakeGraph([])
+    fake.astream_events = boom
+    monkeypatch.setattr(agent, "get_graph", lambda: fake)
+
+    store = Storage()
+    cid = await store.create_conversation()
+    out = await _collect(store, cid, "hi")
+    err = next(e for e in out if e["type"] == "error")
+    assert "try again" in err["message"].lower()
+    assert "APIConnectionError" not in err["message"]  # friendly, not a raw traceback
+
+
+class _FakeConnError(Exception):
+    pass
+
+
+# Give the fake the class name run_turn checks for a friendly error message.
+_FakeConnError.__name__ = "APIConnectionError"
+_FakeConnError.__qualname__ = "APIConnectionError"
+
+
 async def test_run_once_raises_on_error(monkeypatch):
     events = [
         {

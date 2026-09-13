@@ -16,6 +16,10 @@ _TEST_DB = Path(tempfile.gettempdir()) / f"oli_test_{uuid.uuid4().hex}.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
 os.environ["GROQ_API_KEY"] = "test-key-not-real"
 os.environ["ENVIRONMENT"] = "test"
+# Deterministic provider chain regardless of the developer's local .env: Groq only
+# (os.environ overrides .env), so tests that assert on the chain don't depend on whether
+# a MISTRAL_API_KEY happens to be present. Fallback tests opt in via monkeypatch.
+os.environ["MISTRAL_API_KEY"] = ""
 
 import httpx  # noqa: E402
 import pytest_asyncio  # noqa: E402
