@@ -79,7 +79,7 @@ model is better: **pause and ask for confirmation**, then (with #1) let the user
 and the flow *complete* — e.g. fill the cart, pause before "Place order", user says go,
 finish. Same safety, but complex flows can actually finish with a human in the loop.
 
-### 3. Persist a resumable checkpoint per turn
+### 3. Persist a resumable checkpoint per turn — ✅ DONE (warm relaunch, ADR 0018)
 The official `RunContext.checkpoint()` writes state every step and auto-resumes. Our browse
 turn is ephemeral: a server restart or the user stepping away loses it (we hit exactly this
 — a session restart killed the official run mid-flight; a checkpointed run would have

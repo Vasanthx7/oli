@@ -140,7 +140,7 @@ async def _resume_browse_turn(
     metrics.TOOL_CALLS.labels(tool="browse").inc()
     yield {"type": "tool_start", "name": "browse", "args": {"resume": reply}}
     try:
-        result = await fara_browse.resume_paused_browse(reply)
+        result = await fara_browse.resume_pending_browse(reply)
     except Exception as e:  # noqa: BLE001 — surface cleanly, never leave the turn hanging
         metrics.AGENT_ERRORS.labels(type=type(e).__name__).inc()
         with contextlib.suppress(Exception):
@@ -164,11 +164,12 @@ async def run_turn(
     await store.add_message(conversation_id, "user", user_message)
 
     # Resumable browse handover: if a browse paused to ask the user something, THIS
-    # message is the answer — resume that run instead of starting a fresh agent turn
-    # (see oli.tools.fara_browse and evals/browse/E2E_CASES.md #1).
+    # message is the answer — resume that run instead of starting a fresh agent turn.
+    # Covers both a live paused run and a warm relaunch after a restart (ADR 0018 /
+    # ADR 0017 #3; see oli.tools.fara_browse and evals/browse/E2E_CASES.md #1).
     from .tools import fara_browse
 
-    if fara_browse.has_paused_browse():
+    if fara_browse.has_pending_browse():
         async for event in _resume_browse_turn(store, conversation_id, user_message):
             yield event
         return
