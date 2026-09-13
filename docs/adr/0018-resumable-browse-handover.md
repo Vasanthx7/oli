@@ -53,9 +53,14 @@ Make a browse **pause and resume** instead of ending on `ask_user_question`.
   actionable rather than a dead end. The hard purchase guardrail remains as a backstop.
 - **A browser can be held open between turns** while awaiting a reply — acceptable for a
   single-user app (one browse at a time); a new/abandoned task reclaims it.
-- **Not yet durable across a process restart.** State lives in memory, not on disk; a
-  server restart drops a paused browse. Persisting `_RunState` (ADR 0017 takeaway #3) is
-  the follow-up that would make long flows survive restarts.
+- **Durable across a restart via *warm relaunch*.** The live browser can't survive a
+  process restart, so we don't try to resurrect the exact page. Instead, on pause a
+  lightweight record — goal, question, profile, last URL — is persisted to a JSON file
+  (`data/pending_handover.json`; no schema/migration, matches the one-browse model). After
+  a restart the user's reply triggers a *warm relaunch*: a fresh browse seeded with the
+  original goal + the question + the reply + last URL (`resume_after_restart`), routed the
+  same way (`has_pending_browse()` / `resume_pending_browse`). Not pixel-exact resume, but
+  the task continues instead of being silently dropped. (ADR 0017 takeaway #3.)
 - **Ambiguous replies:** a paused browse treats the next message as the answer; if the
   user pivots to something unrelated, the model will usually terminate or re-ask. A
   reply-vs-new-request classifier is a possible refinement.

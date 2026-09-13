@@ -55,6 +55,7 @@ def _state(responses: list[str]) -> fb._RunState:
 def _reset_paused(monkeypatch):
     # No real browser: stub teardown and the resume-seed screenshot.
     monkeypatch.setattr(fb, "_paused", None, raising=False)
+    fb._clear_handover()  # isolate the on-disk persistence between tests
 
     async def _noop_close(_st):
         return None
@@ -66,6 +67,7 @@ def _reset_paused(monkeypatch):
     monkeypatch.setattr(fb, "_append_user_reply", _fake_reply)
     yield
     fb._paused = None
+    fb._clear_handover()
 
 
 async def test_pump_pauses_on_ask_and_keeps_browser():
@@ -110,13 +112,13 @@ async def test_resume_with_nothing_paused_is_graceful():
 
 
 async def test_run_turn_routes_reply_to_resume(monkeypatch):
-    # A paused browse → the next user turn resumes it instead of hitting the graph.
-    monkeypatch.setattr(fb, "has_paused_browse", lambda: True)
+    # A pending browse → the next user turn resumes it instead of hitting the graph.
+    monkeypatch.setattr(fb, "has_pending_browse", lambda: True)
 
     async def _fake_resume(reply: str) -> str:
         return f"Resumed with: {reply}. Anything else?"
 
-    monkeypatch.setattr(fb, "resume_paused_browse", _fake_resume)
+    monkeypatch.setattr(fb, "resume_pending_browse", _fake_resume)
     # If the graph were used this would blow up — assert it is NOT called.
     monkeypatch.setattr(
         agent, "get_graph", lambda: (_ for _ in ()).throw(AssertionError("graph used"))
@@ -134,3 +136,52 @@ async def test_run_turn_routes_reply_to_resume(monkeypatch):
     # Persisted: the user reply + the browse tool row + the assistant answer.
     roles = [m["role"] for m in await store.get_messages(cid)]
     assert roles == ["user", "tool", "assistant"]
+
+
+# --- cross-restart persistence -------------------------------------------------------
+
+
+async def test_pause_persists_handover_to_disk():
+    st = _state([_tool_call("ask_user_question", question="Which center?")])
+    await fb._pump(st)
+    # While the live run is in memory, has_persisted_handover is False (only true once the
+    # live session is gone), but the record IS on disk with the goal + question.
+    assert fb.has_persisted_handover() is False
+    rec = fb._load_handover()
+    assert rec is not None and rec["question"] == "Which center?"
+
+
+async def test_warm_relaunch_after_restart(monkeypatch):
+    # Simulate a restart: a record on disk, no in-memory paused run.
+    st = _state([_tool_call("ask_user_question", question="Which site?")])
+    st.goal = "Sign me up for the newsletter."
+    await fb._pump(st)
+    fb._paused = None  # the live run is gone (process restarted)
+
+    assert fb.has_persisted_handover() is True
+    assert fb.has_pending_browse() is True
+
+    captured = {}
+
+    async def _fake_browse(goal, profile=None, start_url=None):
+        captured["goal"] = goal
+        return "Relaunched and subscribed."
+
+    monkeypatch.setattr(fb, "browse_fara", _fake_browse)
+    result = await fb.resume_pending_browse("example.com, test@example.com")
+
+    assert "relaunched" in result.lower()
+    # The warm relaunch carries the original goal AND the user's reply into a fresh browse.
+    assert "newsletter" in captured["goal"].lower()
+    assert "test@example.com" in captured["goal"].lower()
+    # Record consumed → nothing pending afterwards.
+    assert fb.has_pending_browse() is False
+
+
+async def test_discard_clears_persisted_record():
+    st = _state([_tool_call("ask_user_question", question="Which center?")])
+    await fb._pump(st)
+    assert fb._load_handover() is not None
+    await fb.discard_paused_browse()
+    assert fb._load_handover() is None
+    assert fb.has_pending_browse() is False

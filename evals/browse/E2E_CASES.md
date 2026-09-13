@@ -24,8 +24,10 @@ re-injection, **#5** text-observation fallback for dense/forms, **#6** action va
 
 > **Status:** #1 (resumable handover) is now live — a browse that hits an
 > `ask_user_question` pauses with the browser open and resumes on the user's next reply
-> (`has_paused_browse()` / `resume_paused_browse`). Cases e5/e9/e10/e11/e12 now complete
-> the ask→answer→continue loop instead of dead-ending.
+> (`has_pending_browse()` / `resume_pending_browse`). Cases e5/e9/e10/e11/e12 now complete
+> the ask→answer→continue loop instead of dead-ending. #3 (survive a restart) is handled
+> as a **warm relaunch**: the handover is persisted to disk, so after a restart the reply
+> re-launches a fresh browse seeded with the original goal + answer + last URL (ADR 0018).
 
 ## The 15 cases
 

@@ -70,6 +70,11 @@ class LiveSession:
         self._page: Any = None
         self._cdp: Any = None
         self._subscribers: set[asyncio.Queue] = set()
+        # In-flight screencast-frame-ack tasks (fire-and-forget CDP sends). Tracked so
+        # they can't be GC'd mid-flight, their exceptions are always retrieved, and they
+        # are cancelled on teardown — otherwise an ack that lands after the target closes
+        # raises TargetClosedError as an unretrieved "Task exception was never retrieved".
+        self._ack_tasks: set[asyncio.Task] = set()
         self._last_frame: str | None = None  # newest frame, for instant late-join
         self._lock = asyncio.Lock()
         self.profile: str | None = None
@@ -228,6 +233,7 @@ class LiveSession:
             if self.controlled and self._agent is not None:
                 with contextlib.suppress(Exception):
                     self._agent.resume()
+            self._cancel_acks()
             with contextlib.suppress(Exception):
                 await self._cdp.send("Page.stopScreencast")
             # Detach only our CDP client + Playwright connection; the browser itself
@@ -281,6 +287,7 @@ class LiveSession:
             if not self.running:
                 return None
             profile = self.profile
+            self._cancel_acks()
             with contextlib.suppress(Exception):
                 await self._cdp.send("Page.stopScreencast")
             # Persistent contexts flush cookies to disk on close.
@@ -303,6 +310,7 @@ class LiveSession:
             return profile
 
     def _reset(self) -> None:
+        self._cancel_acks()
         self._pw = self._browser = self._context = self._page = self._cdp = None
         self._last_frame = None
         self.profile = None
@@ -327,11 +335,26 @@ class LiveSession:
                         q.get_nowait()  # drop the stalest frame
                 with contextlib.suppress(asyncio.QueueFull):
                     q.put_nowait(data)
-        # Ack so Chromium keeps sending frames.
+        # Ack so Chromium keeps sending frames. Tracked + exception-suppressed so a late
+        # ack against a closed target never surfaces as an unretrieved task exception.
         if self._cdp is not None and session_id is not None:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
             )
+            self._ack_tasks.add(task)
+            task.add_done_callback(self._on_ack_done)
+
+    def _on_ack_done(self, task: asyncio.Task) -> None:
+        """Retrieve (and swallow) an ack task's result so its exception is never orphaned."""
+        self._ack_tasks.discard(task)
+        with contextlib.suppress(BaseException):
+            task.result()
+
+    def _cancel_acks(self) -> None:
+        """Cancel any in-flight frame-ack tasks (teardown) — no more late CDP sends."""
+        for task in list(self._ack_tasks):
+            task.cancel()
+        self._ack_tasks.clear()
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)

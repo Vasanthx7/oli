@@ -28,6 +28,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -431,6 +432,11 @@ class _RunState:
     agent: FaraBrowseAgent
     messages: list[dict]
     trace_dir: Path | None
+    # Original request, kept so a paused run can be *warm-relaunched* after a process
+    # restart (the live browser can't survive one — see persistence helpers below).
+    goal: str = ""
+    profile: str | None = None
+    start_url: str | None = None
     step: int = 0
     recent: list[str] = field(default_factory=list)
     last_click_bucket: tuple | None = None
@@ -490,6 +496,9 @@ async def _new_state(goal: str, profile: str | None, start_url: str | None) -> _
         agent=agent,
         messages=messages,
         trace_dir=trace_dir,
+        goal=goal,
+        profile=profile,
+        start_url=start_url,
     )
 
 
@@ -695,13 +704,14 @@ def has_paused_browse() -> bool:
 
 
 async def discard_paused_browse() -> None:
-    """Abandon a paused browse (e.g. user moved on) and free its browser."""
+    """Abandon a paused browse (e.g. user moved on) and free its browser + saved record."""
     global _paused
     if _paused is not None:
         st, _paused = _paused, None
         with contextlib.suppress(Exception):
             await _close(st)
         log.info("fara_paused_discarded")
+    _clear_handover()
 
 
 async def _pump(st: _RunState) -> str:
@@ -722,9 +732,11 @@ async def _pump(st: _RunState) -> str:
         return f"browse failed: {e}"
     if kind == "paused":
         _paused = st
+        _persist_handover(st, payload)  # survive a restart as a warm relaunch
         log.info("fara_paused_for_user", step=st.step, question=payload[:120])
         return payload
     await _close(st)
+    _clear_handover()
     return payload
 
 
@@ -762,5 +774,83 @@ async def resume_paused_browse(reply: str) -> str:
         except Exception as e:  # noqa: BLE001 — page died while paused
             log.warning("fara_resume_failed", error=str(e))
             await _close(st)
+            _clear_handover()
             return "I lost the browser session while waiting — please ask me again."
         return await _pump(st)
+
+
+# --- Cross-restart persistence (ADR 0017 #3) ------------------------------------------
+# The live browser can't survive a process restart, so we can't literally resume the same
+# page. Instead, on pause we persist a lightweight record of the handover; after a restart
+# the user's reply triggers a *warm relaunch* — a fresh browse seeded with the original
+# goal, the question we asked, the reply, and the last URL. A JSON file (not a DB table)
+# keeps this migration-free and matches the single-user / one-browse-at-a-time model.
+_HANDOVER_FILE = config.DATA_DIR / "pending_handover.json"
+
+
+def _persist_handover(st: _RunState, question: str) -> None:
+    last_url = ""
+    with contextlib.suppress(Exception):
+        last_url = st.page.url
+    record = {
+        "goal": st.goal,
+        "profile": st.profile,
+        "start_url": st.start_url,
+        "last_url": last_url,
+        "question": question,
+        "ts": time.time(),
+    }
+    with contextlib.suppress(Exception):
+        _HANDOVER_FILE.write_text(json.dumps(record), encoding="utf-8")
+
+
+def _load_handover() -> dict | None:
+    if not _HANDOVER_FILE.exists():
+        return None
+    try:
+        return json.loads(_HANDOVER_FILE.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — a corrupt record is as good as none
+        return None
+
+
+def _clear_handover() -> None:
+    with contextlib.suppress(Exception):
+        _HANDOVER_FILE.unlink(missing_ok=True)
+
+
+def has_persisted_handover() -> bool:
+    """True when a handover was saved to disk but its live run is gone (e.g. a restart)."""
+    return _paused is None and _HANDOVER_FILE.exists()
+
+
+def has_pending_browse() -> bool:
+    """True when the next user message should resume a browse — live OR warm-relaunched."""
+    return has_paused_browse() or has_persisted_handover()
+
+
+async def resume_after_restart(reply: str) -> str:
+    """Warm-relaunch a browse whose live session was lost, seeded with the saved context."""
+    record = _load_handover()
+    _clear_handover()
+    if not record:
+        return "There's no browsing task waiting on your input right now."
+    goal = str(record.get("goal") or "").strip()
+    question = str(record.get("question") or "").strip()
+    last_url = record.get("last_url") or record.get("start_url") or None
+    combined = (
+        f"{goal}\n\n(Resuming after an interruption. I had paused to ask: "
+        f'"{question}" — the user answered: "{reply}". Continue the task with that answer'
+        + (f"; the relevant page was {last_url}." if last_url else ".")
+        + ")"
+    )
+    log.info("fara_warm_relaunch", last_url=last_url or "-")
+    return await browse_fara(combined, profile=record.get("profile"), start_url=last_url)
+
+
+async def resume_pending_browse(reply: str) -> str:
+    """Resume a paused browse: live in-memory if present, else a warm relaunch from disk."""
+    if has_paused_browse():
+        return await resume_paused_browse(reply)
+    if has_persisted_handover():
+        return await resume_after_restart(reply)
+    return "There's no browsing task waiting on your input right now."
