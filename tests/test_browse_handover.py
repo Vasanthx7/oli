@@ -178,6 +178,17 @@ async def test_warm_relaunch_after_restart(monkeypatch):
     assert fb.has_pending_browse() is False
 
 
+async def test_resume_error_clears_persisted_record():
+    # Pause persists a record; if the resume then errors (model drops), the run must clear
+    # it — otherwise a stale handover would hijack the user's next unrelated message.
+    st = _state([_tool_call("ask_user_question", question="Which center?")])
+    await fb._pump(st)
+    assert fb.has_pending_browse() is True
+    r = await fb.resume_paused_browse("Indiranagar")  # no scripted response left -> errors
+    assert fb.has_pending_browse() is False
+    assert "offline" in r.lower() or "failed" in r.lower()
+
+
 async def test_discard_clears_persisted_record():
     st = _state([_tool_call("ask_user_question", question="Which center?")])
     await fb._pump(st)

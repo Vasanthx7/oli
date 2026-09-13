@@ -717,18 +717,22 @@ async def discard_paused_browse() -> None:
 async def _pump(st: _RunState) -> str:
     """Drive ``st`` to a pause or a finish, handling teardown + failure uniformly.
 
-    On pause: stash ``st`` in ``_paused`` (browser stays open) and return the question
-    tagged with HANDOVER_PREFIX. On finish/error: close the browser and return the text."""
+    On pause: stash ``st`` in ``_paused`` (browser stays open) and persist a warm-relaunch
+    record. On any terminal outcome (finish OR error): close the browser and clear the
+    persisted record, so a failed run can't leave a stale handover that hijacks the next
+    message."""
     global _paused
     try:
         kind, payload = await _drive(st)
     except _Unavailable as e:
         log.warning("fara_unavailable", error=str(e))
         await _close(st)
+        _clear_handover()
         return _unavailable_message()
     except Exception as e:  # noqa: BLE001
         log.warning("fara_browse_failed", error=str(e))
         await _close(st)
+        _clear_handover()
         return f"browse failed: {e}"
     if kind == "paused":
         _paused = st
