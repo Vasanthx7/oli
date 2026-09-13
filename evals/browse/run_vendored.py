@@ -108,8 +108,9 @@ async def _run_one(scn: Scenario, attempt: int, model: str, max_steps: int) -> R
         sampler.__enter__()
     try:
         # Call the loop directly (not browse_fara) so we categorize errors ourselves,
-        # exactly like run_fara catches into run_error.
-        final = (await fb._run(scn.goal, None, None)) or ""
+        # exactly like run_fara catches into run_error. Pass the scenario's profile so
+        # authenticated E2E flows run under the saved logged-in context.
+        final = (await fb._run(scn.goal, scn.profile, None)) or ""
         final = final.strip()
         is_done = bool(final) and not final.startswith(_STEP_LIMIT_PREFIX)
     except fb._Unavailable as e:  # model host unreachable
@@ -160,9 +161,10 @@ async def _main_async(args: argparse.Namespace) -> int:
     from oli.config import settings
 
     model = args.model or MODEL
-    # Force parity: one fixed model, no auto-routing, point at the chosen Ollama.
     settings.fara_model = model
-    settings.fara_autoroute = False
+    # A/B parity default: one fixed model, no auto-routing. For E2E flows pass --autoroute
+    # so dense/commerce goals get the 9B tier the product actually uses.
+    settings.fara_autoroute = bool(args.autoroute)
     if args.base_url:
         settings.fara_base_url = args.base_url
     settings.fara_save_traces = False
@@ -176,6 +178,20 @@ async def _main_async(args: argparse.Namespace) -> int:
     if not scenarios:
         print("no scenarios matched")
         return 1
+
+    # Guard: `manual` scenarios have real side effects (book/order/submit) or need a live
+    # login — never run them unless the operator explicitly opts in AND is watching.
+    manual = [s for s in scenarios if s.manual]
+    if manual and not args.allow_manual:
+        names = ", ".join(s.id for s in manual)
+        print(
+            f"REFUSING to run {len(manual)} side-effecting/auth scenario(s) without "
+            f"--allow-manual: {names}\n"
+            "Re-run with --autoroute --allow-manual, watched, on an authorized account."
+        )
+        scenarios = [s for s in scenarios if not s.manual]
+        if not scenarios:
+            return 1
 
     print(
         f"vendored loop | model={model} | base_url={settings.fara_base_url} | max_steps={max_steps}"
@@ -229,6 +245,16 @@ def main() -> int:
     p.add_argument("--model", type=str, default="", help="Ollama model tag (default fara15-4b)")
     p.add_argument(
         "--base-url", type=str, default="", help="override the OpenAI-compatible base URL"
+    )
+    p.add_argument(
+        "--autoroute",
+        action="store_true",
+        help="enable 4B/9B auto-routing (product behavior; for E2E flows). Off = A/B parity.",
+    )
+    p.add_argument(
+        "--allow-manual",
+        action="store_true",
+        help="permit side-effecting/auth (manual=True) scenarios — run watched, authorized.",
     )
     args = p.parse_args()
 

@@ -35,6 +35,12 @@ Defined in [`scenarios.py`](scenarios.py), graded by tier:
 - **Tier 3** — interact: search box, follow a result (form fill + click)
 - **Tier 4** — dynamic / multi-hop / JS-heavy (the stress cases)
 
+**End-to-end cases** (`E2E_SCENARIOS`) cover authenticated profiles (`amazon`, `cult`,
+`zomato`), user handover / critical points, and complex multi-step flows — each with a
+per-flow failure analysis + handling in [`E2E_CASES.md`](E2E_CASES.md). Side-effecting /
+auth flows are `manual` and are refused without `--allow-manual`. Run one with, e.g.,
+`--ids e3-amazon-add-cable-stop --autoroute --allow-manual` (watched, authorized account).
+
 Edit `scenarios.py` to change what "the model can do" means. Each scenario has a
 `validate(final_result)` that grades the answer independently of the agent's own
 self-reported success.
