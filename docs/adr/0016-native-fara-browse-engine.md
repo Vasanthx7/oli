@@ -59,8 +59,17 @@ selected by `settings.browse_engine == "fara"`:
   vs the official harness — mitigated by vendoring the exact prompt and matching
   the operating point). Browse is unavailable when the GPU box is offline (by
   design). Take-control pauses at step boundaries, not mid-action.
-- **Known model gaps** (from the benchmark): form-fill/search-box interactions are
-  weak; a targeted prompt/loop fix is future work.
+- **Form-fill/search-box weakness — mitigated.** The engine now detects stalls (the
+  same action type three steps running) and injects an **action-aware nudge** (a
+  repeated click on a field → "it's focused, type now"; repeated scrolling → "stop,
+  click the target"), plus a short form/search hint on the task and a screenshot
+  retry through navigation. This eliminated the pathological loops (10× click on a
+  search box, 6× scroll on a form) with **no regression** (8/10, the 8 non-form
+  scenarios still pass, fast). Residual: DuckDuckGo's HTML endpoint bot-blocks the
+  headless browser — the agent now fails *gracefully* (reports the block) instead of
+  looping; and httpbin's multi-field form (radios/checkboxes/textarea) is still
+  beyond reliable 4B grounding within budget (9B also fails it). A larger model is
+  the lever for the hardest forms.
 - **Follow-ups:** revisit a bigger model on a ≥12 GB card (Fara-9B was the accuracy
   ceiling); add the recorded-workflow redirect; consider surfacing engine health in
   the UI.

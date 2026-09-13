@@ -47,6 +47,40 @@ MAX_STEPS = 12
 MAX_IMAGES = 3  # keep only the most recent N screenshots in the prompt
 USER_MESSAGE = "Here is the next screenshot. Think about what to do next."
 
+# Fara-4B's weak spots are form-fill and search-box interaction (it stalls, e.g.
+# scrolling in place looking for a submit button — see ADR 0016 / BENCHMARK.md).
+# We steer those *without* touching the verbatim system prompt: a short operational
+# hint appended to the user task, plus a runtime anti-stall nudge (below).
+_TASK_HINT = (
+    "\n\nTips: To fill a form, click a field, type its value, move to the next field, "
+    "and once all fields are filled click the form's submit/post button. To use a "
+    "search box, click it, type the query, then press Enter. If the screenshot looks "
+    "unchanged after an action, do NOT repeat it — try a different target or action."
+)
+# Injected when the model repeats the same action type with no progress. Action-aware:
+# clicking a text field repeatedly means it's already focused (type instead); scrolling
+# repeatedly means the target is likely already on screen (click it, stop scrolling).
+_STUCK_HINTS = {
+    "left_click": (
+        "You have clicked the same spot several times with no change. If it is a text "
+        "field it is ALREADY focused — TYPE the text now instead of clicking again. If "
+        "nothing is happening, the element may be elsewhere; pick a different target."
+    ),
+    "scroll": (
+        "You have scrolled repeatedly with no progress. Stop scrolling — the element you "
+        "need (e.g. the submit/post button or a link) is likely already visible; click "
+        "it directly."
+    ),
+    "type": (
+        "You have typed repeatedly. Do not type again — move on: submit the form (click "
+        "its submit/post button) or press Enter, or click the next field you need."
+    ),
+}
+_STUCK_HINT = (
+    "You have repeated the same action several times with no visible change. Re-read the "
+    "screenshot and pick a DIFFERENT action or target."
+)
+
 _SYSTEM_PROMPT = (Path(__file__).parent / "fara_system_prompt.txt").read_text(encoding="utf-8")
 
 # Fara key names → Playwright key names (best-effort; unknowns pass through).
@@ -146,7 +180,21 @@ def _trim_images(messages: list[dict], keep: int) -> None:
 
 
 async def _screenshot(page: Any) -> bytes:
-    return await page.screenshot(type="png")
+    """Capture a PNG, retrying through transient mid-navigation failures.
+
+    Chromium's captureScreenshot can fail while a navigation is committing; a short
+    wait + retry rides over it rather than aborting the whole run.
+    """
+    last: Exception | None = None
+    for _attempt in range(3):
+        try:
+            return await page.screenshot(type="png")
+        except Exception as e:  # noqa: BLE001
+            last = e
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=5000)
+            await asyncio.sleep(0.6)
+    raise last if last else RuntimeError("screenshot failed")
 
 
 async def _dispatch(page: Any, action: str, args: dict[str, Any]) -> tuple[bool, str]:
@@ -307,12 +355,13 @@ async def _run(goal: str, profile: str | None) -> str:
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": _b64_data_uri(first_shot)}},
-                    {"type": "text", "text": goal},
+                    {"type": "text", "text": goal + _TASK_HINT},
                 ],
             },
         ]
 
         pending_obs = ""
+        recent: list[str] = []  # recent action names, for stall detection
         for _step in range(MAX_STEPS):
             await agent.wait_if_paused()  # block here while the user has control
 
@@ -330,6 +379,20 @@ async def _run(goal: str, profile: str | None) -> str:
             messages.append({"role": "assistant", "content": text})
             thoughts, args = _parse(text)
             action = args.get("action", "terminate")
+            # Stall detector: the same action *type* three steps running (regardless of
+            # exact coords) is the form/search-box failure mode — e.g. scrolling around
+            # hunting for a submit button. Catch it and nudge, don't burn the budget.
+            recent.append(action)
+            recent = recent[-3:]
+            stalled = len(recent) == 3 and len(set(recent)) == 1
+            log.info(
+                "fara_step",
+                step=_step + 1,
+                action=action,
+                coord=args.get("coordinate"),
+                stalled=stalled,
+                thought=thoughts[:140],
+            )
 
             is_terminal, obs = await _dispatch(page, action, args)
             if isinstance(obs, str) and obs.startswith("__READ__:"):
@@ -347,7 +410,8 @@ async def _run(goal: str, profile: str | None) -> str:
             with contextlib.suppress(Exception):
                 url = page.url
             prefix = f"Current URL: {url}\n" if url else ""
-            note = (pending_obs + "\n") if pending_obs else ""
+            stuck = (_STUCK_HINTS.get(action, _STUCK_HINT) + "\n") if stalled else ""
+            note = stuck + ((pending_obs + "\n") if pending_obs else "")
             pending_obs = ""
             messages.append(
                 {
