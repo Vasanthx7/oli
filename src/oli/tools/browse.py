@@ -14,7 +14,10 @@ import contextlib
 from typing import Any
 
 from .. import config, live_browser, profiles
+from ..logging_config import get_logger
 from ..ratelimit import RateLimiter
+
+log = get_logger(__name__)
 
 # browser-use drives headless Chromium; keep a step ceiling so a confused run can't
 # loop forever. Lower than the old 20 to cut the number of LLM calls per browse,
@@ -74,19 +77,66 @@ def _extract_result(history) -> str:
     return str(history)
 
 
-def _login_prompt(res: dict) -> str:
-    """Message asking the user to set up / finish a login, when browse needs one."""
-    label = res.get("label") or res.get("name")
+# Irreversible commercial actions we must NOT take autonomously (#4). "buy a cable"
+# colloquially means "shop for / add to cart", so only the strong final-step phrases
+# gate here; the browse task also carries a safety instruction (fara_browse) telling
+# the model to stop before any place-order/pay click.
+_PURCHASE_TERMS = (
+    "place order",
+    "place the order",
+    "place an order",
+    "complete purchase",
+    "complete the purchase",
+    "confirm purchase",
+    "confirm the order",
+    "pay now",
+    "make payment",
+    "make the payment",
+    "pay for",
+    "checkout and pay",
+    "buy now",
+    "proceed to pay",
+)
+
+
+def _needs_purchase_confirm(goal: str) -> bool:
+    g = goal.lower()
+    return any(t in g for t in _PURCHASE_TERMS)
+
+
+_PURCHASE_REFUSAL = (
+    "I won't place an order or complete a payment automatically — that step is "
+    "irreversible and spends real money. I can add the item(s) to your cart and take "
+    "you to checkout, then you review and pay yourself. Want me to do that?"
+)
+
+
+async def _offer_login(res: dict) -> str:
+    """Handle a login-needed result (#3): open the site in the live browser view for an
+    inline sign-in when we can, else tell the user how to set one up."""
+    name = res.get("name")
+    label = res.get("label") or name
+    url = res.get("start_url")
+    if name and url:
+        live = live_browser.session()
+        try:
+            await live.start(profile=name, url=url)
+            return (
+                f"You're not signed in to **{label}** yet. I've opened it in the browser "
+                "panel — please sign in there, then close the panel and ask me again, and "
+                "I'll continue with your account. (Your password never reaches me.)"
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("inline_login_failed", profile=name, error=str(e))
     if label:
         return (
-            f"I have a saved browser profile for **{label}** but it isn't logged in "
-            "yet. Open the 🔐 Profiles panel and finish signing in to it once "
-            "(your password never reaches me), then ask me again."
+            f"I have a saved profile for **{label}** but it isn't signed in. Open the "
+            "🔐 Profiles panel and sign in once, then ask me again."
         )
     return (
-        "That needs me to be signed in to the site, and I don't have a saved login "
-        "for it. Open the 🔐 Profiles panel, add a profile for the site and sign in "
-        "once (your password never reaches me), then ask me again."
+        "That needs me to be signed in to the site, and I don't have a saved login for "
+        "it. Open the 🔐 Profiles panel, add a profile for the site and sign in once "
+        "(your password never reaches me), then ask me again."
     )
 
 
@@ -107,16 +157,34 @@ async def browse(goal: str, profile: str | None = None) -> str:
     and reuse its login URL; if the site needs a login we don't have, we ask the user
     to set one up; otherwise we browse normally (the web-search-style fallback).
     """
+    # #4: never auto-complete an irreversible purchase — offer cart + checkout instead.
+    if _needs_purchase_confirm(goal):
+        return _PURCHASE_REFUSAL
+
     start_url: str | None = None
     if not profile:
+        res: dict = {}
         with contextlib.suppress(Exception):
             res = await profiles.resolve_for_goal(goal)
-            if res.get("action") == "use":
-                profile = res.get("name")
-                start_url = res.get("start_url")
-            elif res.get("action") == "login":
-                return _login_prompt(res)
-            # "none" -> browse logged-out (normal browse / web-search fallback)
+        if res.get("action") == "use":
+            profile = res.get("name")
+            start_url = res.get("start_url")
+        elif res.get("action") == "login":
+            return await _offer_login(res)
+        # "none" -> browse logged-out (normal browse / web-search fallback)
+
+    # An open inline login holds this profile's user-data dir; a headless browse on the
+    # same dir would fail, so ask the user to finish signing in first.
+    if profile:
+        live = live_browser.session()
+        if (
+            getattr(live, "running", False)
+            and not getattr(live, "agent_mode", False)
+            and getattr(live, "profile", None) == profile
+        ):
+            return (
+                f"Finish signing in to '{profile}' and close the browser panel, then ask me again."
+            )
 
     if config.settings.browse_engine == "fara":
         from . import fara_browse

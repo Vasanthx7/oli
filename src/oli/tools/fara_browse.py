@@ -84,6 +84,12 @@ _STUCK_HINT = (
     "You have repeated the same action several times with no visible change. Re-read the "
     "screenshot and pick a DIFFERENT action or target."
 )
+# Hard safety rail (#4): the model must never complete an irreversible purchase.
+_SAFETY_SUFFIX = (
+    "\n\nSafety: NEVER place an order or complete a payment. Do not click 'Place order', "
+    "'Buy now', 'Pay', 'Proceed to pay', or otherwise confirm a purchase. If the task "
+    "would require that, stop just before it and report what remains for the user to do."
+)
 
 _SYSTEM_PROMPT = (Path(__file__).parent / "fara_system_prompt.txt").read_text(encoding="utf-8")
 
@@ -430,7 +436,7 @@ async def _run(goal: str, profile: str | None, start_url: str | None = None) -> 
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": _b64_data_uri(first_shot)}},
-                    {"type": "text", "text": goal + _TASK_HINT},
+                    {"type": "text", "text": goal + _TASK_HINT + _SAFETY_SUFFIX},
                 ],
             },
         ]

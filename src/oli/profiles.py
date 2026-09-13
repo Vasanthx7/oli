@@ -139,14 +139,15 @@ async def resolve_for_goal(goal: str) -> dict:
         root = _domain_root(r.get("start_url") or "")
         keys = {k for k in (r.get("name"), (r.get("label") or "").lower(), root) if k}
         if any(re.search(rf"\b{re.escape(k)}\b", g) for k in keys):
-            if r.get("logged_in"):
-                return {
-                    "action": "use",
-                    "name": r["name"],
-                    "label": r.get("label"),
-                    "start_url": r.get("start_url"),
-                }
-            return {"action": "login", "name": r["name"], "label": r.get("label")}
+            # #1: matched a saved profile for this site — prefer it even for plain
+            # reads (logged-in pages are cleaner/consistent), not just account actions.
+            action = "use" if r.get("logged_in") else "login"
+            return {
+                "action": action,
+                "name": r["name"],
+                "label": r.get("label"),
+                "start_url": r.get("start_url"),
+            }
 
     # 2. No profile matched. If the goal clearly needs an authenticated site, ask the
     #    user to set one up rather than silently browsing logged-out.
