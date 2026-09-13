@@ -47,8 +47,10 @@ VIEWPORT = {"width": 1440, "height": 900}
 DISPLAY_SIZE = 1000
 # Local Fara has no per-minute rate limit (the browser-use path's MAX_STEPS=12 was a
 # Groq-rate compromise), and real interactive flows — search → open result → scroll →
-# add to cart → confirm — need the room. Keep it bounded so a confused run still ends.
-MAX_STEPS = 24
+# add to cart → confirm — need the room. This budget is shared across a whole resumable
+# session (pauses for user handover consume from it — see ADR 0018), so it's set high
+# enough that a clarify-then-continue flow can still finish; bounded so a confused run ends.
+MAX_STEPS = 50
 MAX_IMAGES = 3  # keep only the most recent N screenshots in the prompt
 USER_MESSAGE = "Here is the next screenshot. Think about what to do next."
 
