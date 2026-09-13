@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import respx
 
@@ -12,6 +14,23 @@ def test_registry_exposes_expected_tools():
 async def test_run_unknown_tool_returns_message():
     result = await tools.run_tool("does_not_exist", {})
     assert "Unknown tool" in result
+
+
+async def test_tool_timeout_returns_friendly_message():
+    async def slow(query: str) -> str:
+        await asyncio.sleep(5)
+        return "done"
+
+    wrapped = tools._with_timeout(slow, "slow_tool", timeout=0)
+    result = await wrapped(query="x")
+    assert "slow_tool timed out" in result
+
+
+async def test_langchain_tools_preserve_arg_schema_when_wrapped():
+    # Timeout wrapping must not hide the handler's arg schema (functools.wraps).
+    by_name = {t.name: set(t.args) for t in tools.langchain_tools()}
+    assert by_name["web_search"] == {"query"}
+    assert by_name["browse"] == {"goal", "profile"}
 
 
 @respx.mock

@@ -6,12 +6,37 @@ capability is still just one entry here. `run_tool`/`SCHEMAS` remain for direct
 dispatch and tests.
 """
 
+import asyncio
+import functools
 from collections.abc import Awaitable, Callable
 from typing import TypedDict
 
 from langchain_core.tools import StructuredTool
 
+from ..config import settings
+from ..logging_config import get_logger
 from . import browse, memory_tools, web_fetch, web_search
+
+log = get_logger(__name__)
+
+
+def _with_timeout(
+    handler: Callable[..., Awaitable[str]], name: str, timeout: int
+) -> Callable[..., Awaitable[str]]:
+    """Wrap a tool handler in a hard timeout, returned to the model as a string.
+
+    functools.wraps keeps the handler's signature/annotations visible so
+    StructuredTool still infers the arg schema from the original handler."""
+
+    @functools.wraps(handler)
+    async def wrapper(*args, **kwargs) -> str:
+        try:
+            return await asyncio.wait_for(handler(*args, **kwargs), timeout=timeout)
+        except TimeoutError:
+            log.warning("tool_timeout", tool=name, timeout=timeout)
+            return f"{name} timed out after {timeout}s and was stopped."
+
+    return wrapper
 
 
 class Tool(TypedDict):
@@ -39,12 +64,16 @@ def langchain_tools() -> list[StructuredTool]:
     inferred from the handler's type hints. The async handler is used directly as
     the tool's coroutine.
     """
+    timeout = settings.tool_timeout_seconds
     tools: list[StructuredTool] = []
     for name, tool in _TOOLS.items():
         fn = tool["schema"]["function"]
+        handler = tool["handler"]
+        # Cap each tool call so a hung tool can't stall a turn (0 = disabled).
+        coroutine = _with_timeout(handler, name, timeout) if timeout > 0 else handler
         tools.append(
             StructuredTool.from_function(
-                coroutine=tool["handler"],
+                coroutine=coroutine,
                 name=name,
                 description=fn["description"],
             )

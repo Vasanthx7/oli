@@ -76,6 +76,88 @@ def build_profile(name: str | None, *, headless: bool) -> Any | None:
     return BrowserProfile(user_data_dir=str(d), headless=headless, keep_alive=False)
 
 
+# Signals that a goal targets an *authenticated* site (needs a logged-in profile),
+# so if we can't match one we should ask the user to log in rather than fail.
+_ACCOUNT_TERMS = (
+    "my cart",
+    "my basket",
+    "my order",
+    "my account",
+    "my wishlist",
+    "my wish list",
+    "wish list",
+    "add to cart",
+    "add to basket",
+    "add it to",
+    "checkout",
+    "check out",
+    "place an order",
+    "sign in",
+    "log in",
+    "logged in",
+    "my profile",
+    "my subscriptions",
+    "my watchlist",
+)
+
+# TLDs / prefixes stripped when reducing a start_url to a matchable site root, so
+# "https://www.amazon.in/" -> "amazon" matches "check my amazon cart".
+_STRIP_LABELS = {"www", "com", "in", "co", "org", "net", "io", "gov", "edu", "app"}
+
+
+def _domain_root(url: str) -> str:
+    """Reduce a URL to a matchable site root, e.g. https://www.amazon.in/ -> 'amazon'."""
+    if not url:
+        return ""
+    from urllib.parse import urlparse
+
+    host = urlparse(url if "://" in url else "https://" + url).netloc.lower().split(":")[0]
+    parts = [p for p in host.split(".") if p and p not in _STRIP_LABELS]
+    return parts[-1] if parts else host
+
+
+async def resolve_for_goal(goal: str) -> dict:
+    """Decide which saved profile (if any) a browse goal should use.
+
+    The user shouldn't have to name the profile or paste the site URL — we match the
+    goal against saved profiles by name / label / site-root and reuse the profile's
+    own ``start_url`` (the link used at login) as the preferred entry point.
+
+    Returns a dict with ``action``:
+      * ``"use"``   — a logged-in profile matched; also gives ``name`` + ``start_url``.
+      * ``"login"`` — the site needs a login we don't have (``name``/``label`` set when
+                      a profile exists but isn't logged in; both None when none exists).
+      * ``"none"``  — no profile needed; browse normally (the web-search fallback).
+    """
+    mgr = active()
+    g = (goal or "").lower()
+    rows = await mgr.list_with_status() if mgr is not None else []
+
+    # 1. Match a saved profile by name, label, or its site root — as a *whole word*,
+    #    so a short root like 'x' (x.com) doesn't match inside "netfli-x".
+    for r in rows:
+        root = _domain_root(r.get("start_url") or "")
+        keys = {k for k in (r.get("name"), (r.get("label") or "").lower(), root) if k}
+        if any(re.search(rf"\b{re.escape(k)}\b", g) for k in keys):
+            # #1: matched a saved profile for this site — prefer it even for plain
+            # reads (logged-in pages are cleaner/consistent), not just account actions.
+            action = "use" if r.get("logged_in") else "login"
+            return {
+                "action": action,
+                "name": r["name"],
+                "label": r.get("label"),
+                "start_url": r.get("start_url"),
+            }
+
+    # 2. No profile matched. If the goal clearly needs an authenticated site, ask the
+    #    user to set one up rather than silently browsing logged-out.
+    if any(t in g for t in _ACCOUNT_TERMS):
+        return {"action": "login", "name": None, "label": None}
+
+    # 3. Otherwise no profile is needed — browse normally.
+    return {"action": "none"}
+
+
 class ProfileManager:
     """Orchestrates the interactive login flow and records profile metadata.
 

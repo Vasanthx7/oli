@@ -70,15 +70,24 @@ class LiveSession:
         self._page: Any = None
         self._cdp: Any = None
         self._subscribers: set[asyncio.Queue] = set()
+        # In-flight screencast-frame-ack tasks (fire-and-forget CDP sends). Tracked so
+        # they can't be GC'd mid-flight, their exceptions are always retrieved, and they
+        # are cancelled on teardown — otherwise an ack that lands after the target closes
+        # raises TargetClosedError as an unretrieved "Task exception was never retrieved".
+        self._ack_tasks: set[asyncio.Task] = set()
         self._last_frame: str | None = None  # newest frame, for instant late-join
         self._lock = asyncio.Lock()
         self.profile: str | None = None
         self.running = False
         # Attached-mode state (watching an autonomous browse run).
         self._owns_browser = True  # False when tapping browser-use's browser
-        self._agent: Any = None  # the browser-use Agent, for pause/resume
+        self._agent: Any = None  # the browser-use / Fara agent, for pause/resume
         self.agent_mode = False  # True while attached to an agent's browser
         self.controlled = False  # True once the user has "taken control" (agent paused)
+        # Viewport used to scale incoming [0,1] input fractions to page pixels. The
+        # attached page may render larger than our default (Fara uses 1440x900), so
+        # attach_page overrides this to the page's real size.
+        self._input_viewport: dict[str, int] = VIEWPORT
 
     # --- lifecycle -------------------------------------------------------
 
@@ -173,6 +182,45 @@ class LiveSession:
             log.info("live_browser_attached_agent")
             return True
 
+    async def attach_page(self, page: Any, agent: Any) -> bool:
+        """Tap the screencast onto a Playwright ``page`` that *we* own (the Fara
+        engine's page), so the user can watch and take control.
+
+        Unlike :meth:`attach_agent` (which connects a second CDP client to
+        browser-use's browser via a URL), here we already hold the page object, so
+        we open a CDP session directly on it. Input is scaled to the page's real
+        viewport. Detaching stops our tap but never closes the page — the Fara
+        engine owns its browser lifecycle.
+
+        ``agent`` must expose ``pause()``/``resume()`` for take-control. Returns
+        ``False`` (no-op) if a live session is already up.
+        """
+        async with self._lock:
+            if self.running:
+                return False
+            try:
+                self._page = page
+                self._context = page.context
+                self._cdp = await self._context.new_cdp_session(page)
+                self._cdp.on("Page.screencastFrame", self._on_frame)
+                await self._cdp.send("Page.startScreencast", SCREENCAST)
+            except Exception as e:  # noqa: BLE001
+                log.warning("live_attach_page_failed", error=str(e))
+                self._reset()
+                return False
+
+            vp = None
+            with contextlib.suppress(Exception):
+                vp = page.viewport_size
+            self._input_viewport = vp or VIEWPORT
+            self._owns_browser = False
+            self.agent_mode = True
+            self.controlled = False
+            self._agent = agent
+            self.running = True
+            log.info("live_browser_attached_page")
+            return True
+
     async def detach(self) -> None:
         """Stop tapping the agent's browser. Never closes browser-use's browser.
 
@@ -185,6 +233,7 @@ class LiveSession:
             if self.controlled and self._agent is not None:
                 with contextlib.suppress(Exception):
                     self._agent.resume()
+            self._cancel_acks()
             with contextlib.suppress(Exception):
                 await self._cdp.send("Page.stopScreencast")
             # Detach only our CDP client + Playwright connection; the browser itself
@@ -238,6 +287,7 @@ class LiveSession:
             if not self.running:
                 return None
             profile = self.profile
+            self._cancel_acks()
             with contextlib.suppress(Exception):
                 await self._cdp.send("Page.stopScreencast")
             # Persistent contexts flush cookies to disk on close.
@@ -260,6 +310,7 @@ class LiveSession:
             return profile
 
     def _reset(self) -> None:
+        self._cancel_acks()
         self._pw = self._browser = self._context = self._page = self._cdp = None
         self._last_frame = None
         self.profile = None
@@ -268,6 +319,7 @@ class LiveSession:
         self._agent = None
         self.agent_mode = False
         self.controlled = False
+        self._input_viewport = VIEWPORT
 
     # --- streaming -------------------------------------------------------
 
@@ -283,11 +335,26 @@ class LiveSession:
                         q.get_nowait()  # drop the stalest frame
                 with contextlib.suppress(asyncio.QueueFull):
                     q.put_nowait(data)
-        # Ack so Chromium keeps sending frames.
+        # Ack so Chromium keeps sending frames. Tracked + exception-suppressed so a late
+        # ack against a closed target never surfaces as an unretrieved task exception.
         if self._cdp is not None and session_id is not None:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
             )
+            self._ack_tasks.add(task)
+            task.add_done_callback(self._on_ack_done)
+
+    def _on_ack_done(self, task: asyncio.Task) -> None:
+        """Retrieve (and swallow) an ack task's result so its exception is never orphaned."""
+        self._ack_tasks.discard(task)
+        with contextlib.suppress(BaseException):
+            task.result()
+
+    def _cancel_acks(self) -> None:
+        """Cancel any in-flight frame-ack tasks (teardown) — no more late CDP sends."""
+        for task in list(self._ack_tasks):
+            task.cancel()
+        self._ack_tasks.clear()
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)
@@ -336,8 +403,8 @@ class LiveSession:
             log.debug("live_input_failed", kind=kind, error=str(e))
 
     async def _mouse(self, kind: str, event: dict) -> None:
-        x = float(event.get("xr", 0)) * VIEWPORT["width"]
-        y = float(event.get("yr", 0)) * VIEWPORT["height"]
+        x = float(event.get("xr", 0)) * self._input_viewport["width"]
+        y = float(event.get("yr", 0)) * self._input_viewport["height"]
         cdp_type = {
             "mousemove": "mouseMoved",
             "mousedown": "mousePressed",
@@ -349,8 +416,8 @@ class LiveSession:
         await self._cdp.send("Input.dispatchMouseEvent", params)
 
     async def _wheel(self, event: dict) -> None:
-        x = float(event.get("xr", 0.5)) * VIEWPORT["width"]
-        y = float(event.get("yr", 0.5)) * VIEWPORT["height"]
+        x = float(event.get("xr", 0.5)) * self._input_viewport["width"]
+        y = float(event.get("yr", 0.5)) * self._input_viewport["height"]
         await self._cdp.send(
             "Input.dispatchMouseEvent",
             {

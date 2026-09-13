@@ -105,13 +105,27 @@ uv run alembic downgrade -1                              # roll back one
 Dev on SQLite auto-creates tables via `init_models`; production (Postgres) is
 migration-managed only.
 
-## Quality gate (what CI runs)
+## Quality gate
+
+Quality is **local-first**. Install the git hooks once per clone:
+
+```bash
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+- **on commit:** ruff (+ `--fix`), ruff-format, whitespace/yaml/toml checks.
+- **on push:** mypy + pytest (the heavier gates, before code leaves your machine).
+
+CI runs the same checks (`quality` + `container`) **only at the `main` boundary** —
+a `dev` → `main` PR or a push to `main` — not on feature → `dev` PRs. Run the full gate
+by hand any time with:
 
 ```bash
 uv run ruff check .          # lint
 uv run ruff format --check . # format
 uv run mypy src/oli          # types
 uv run pytest                # tests (offline; dummy key + temp DB)
+uv run pre-commit run -a     # everything the local gate checks
 ```
 
 ## Observability

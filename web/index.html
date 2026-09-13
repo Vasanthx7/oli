@@ -4,24 +4,24 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Oli — Personal Assistant</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%237c5cff'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233a5a6b'/%3E%3Cpath d='M16 6l2.6 7.4L26 16l-7.4 2.6L16 26l-2.6-7.4L6 16l7.4-2.6z' fill='%23fffdf8'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div id="app">
     <aside id="sidebar">
       <div class="sidebar-head">
-        <span class="brand">✦ Oli</span>
+        <span class="brand"><span class="brand-mark" data-icon="sparkle"></span>Oli</span>
         <div class="head-actions">
-          <button id="bell-btn" title="Notifications">🔔<span id="bell-badge" class="badge hidden">0</span></button>
-          <button id="new-chat" title="New chat">＋</button>
+          <button id="bell-btn" title="Notifications"><span data-icon="bell"></span><span id="bell-badge" class="badge hidden">0</span></button>
+          <button id="new-chat" title="New chat"><span data-icon="plus"></span></button>
         </div>
       </div>
       <ul id="conversation-list"></ul>
-      <button id="tasks-btn" title="Scheduled proactive tasks">⏰ Scheduled tasks</button>
-      <button id="memory-btn" title="What Oli remembers">🧠 Memory</button>
-      <button id="profiles-btn" title="Logged-in browser profiles">🔐 Browser profiles</button>
-      <button id="live-btn" title="Watch and drive a live browser">🖥 Live browser</button>
+      <button id="tasks-btn" class="nav-btn" title="Scheduled proactive tasks"><span data-icon="clock"></span>Scheduled tasks</button>
+      <button id="memory-btn" class="nav-btn" title="What Oli remembers"><span data-icon="memory"></span>Memory</button>
+      <button id="profiles-btn" class="nav-btn" title="Logged-in browser profiles"><span data-icon="lock"></span>Browser profiles</button>
+      <button id="live-btn" class="nav-btn" title="Watch and drive a live browser"><span data-icon="monitor"></span>Live browser</button>
     </aside>
 
     <main id="main">
@@ -38,9 +38,9 @@
       </div>
 
       <form id="composer" autocomplete="off">
-        <button id="mic" type="button" title="Hold a conversation by voice">🎙</button>
+        <button id="mic" type="button" title="Hold a conversation by voice"><span data-icon="mic"></span></button>
         <textarea id="input" rows="1" placeholder="Message Oli…"></textarea>
-        <button id="send" type="submit" title="Send">➤</button>
+        <button id="send" type="submit" title="Send"><span data-icon="send"></span></button>
       </form>
       <div id="voice-status" class="hidden"></div>
     </main>
@@ -49,8 +49,8 @@
   <div id="memory-modal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h2>🧠 What Oli remembers</h2>
-        <button id="memory-close" title="Close">✕</button>
+        <h2><span data-icon="memory"></span>What Oli remembers</h2>
+        <button id="memory-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
       </div>
       <form id="memory-add">
         <input id="memory-input" type="text" placeholder="Teach Oli a fact about you…" />
@@ -63,8 +63,8 @@
   <div id="tasks-modal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h2>⏰ Scheduled tasks</h2>
-        <button id="tasks-close" title="Close">✕</button>
+        <h2><span data-icon="clock"></span>Scheduled tasks</h2>
+        <button id="tasks-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
       </div>
       <form id="task-add">
         <input id="task-title" type="text" placeholder="Title (e.g. Morning briefing)" />
@@ -90,8 +90,8 @@
   <div id="notif-modal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h2>🔔 Notifications</h2>
-        <button id="notif-close" title="Close">✕</button>
+        <h2><span data-icon="bell"></span>Notifications</h2>
+        <button id="notif-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
       </div>
       <ul id="notif-list"></ul>
     </div>
@@ -100,13 +100,13 @@
   <div id="profiles-modal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h2>🔐 Browser profiles</h2>
-        <button id="profiles-close" title="Close">✕</button>
+        <h2><span data-icon="lock"></span>Browser profiles</h2>
+        <button id="profiles-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
       </div>
       <p class="modal-note">
-        Log into a site <strong>once</strong> in a real browser window; Oli reuses that
-        session when browsing — so it can act on your logged-in pages.
-        <strong>Your password is never sent to the AI.</strong>
+        Sign in to a site <strong>once</strong> in a real browser window. Oli reuses that
+        saved session when browsing, so it can access pages that require you to be logged in.
+        <strong>Your password is never shared with the model.</strong>
       </p>
       <form id="profile-add">
         <input id="profile-label" type="text" placeholder="Name (e.g. Twitter)" />
@@ -120,13 +120,13 @@
   <div id="live-modal" class="modal hidden">
     <div class="modal-card live-card">
       <div class="modal-head">
-        <h2>🖥 Live browser</h2>
-        <button id="live-close" title="Close">✕</button>
+        <h2><span data-icon="monitor"></span>Live browser</h2>
+        <button id="live-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
       </div>
       <p class="modal-note">
-        Watch and drive a real browser running on the server. Bind it to a profile
-        to <strong>log in once</strong> and save the session for the agent to reuse —
-        works even on a headless VM. <strong>Your password never reaches the AI.</strong>
+        Watch and control a real browser running on the server. Link it to a profile
+        to <strong>sign in once</strong> and save the session for reuse, including on
+        headless servers. <strong>Your password is never shared with the model.</strong>
       </p>
       <div id="live-controls">
         <select id="live-profile" title="Save the session to this profile">
@@ -138,9 +138,9 @@
         <button id="live-stop" class="danger hidden">Stop &amp; save</button>
       </div>
       <div id="live-agent-bar" class="hidden">
-        <span id="live-agent-note">🤖 Oli is browsing…</span>
-        <button id="live-take" class="primary" title="Pause Oli and drive the browser yourself">✋ Take control</button>
-        <button id="live-resume" class="hidden" title="Resume Oli from here">↩ Give back to Oli</button>
+        <span id="live-agent-note"><span data-icon="bot"></span>Oli is browsing…</span>
+        <button id="live-take" class="primary" title="Pause Oli and drive the browser yourself"><span data-icon="hand"></span>Take control</button>
+        <button id="live-resume" class="hidden" title="Resume Oli from here"><span data-icon="undo"></span>Give back to Oli</button>
       </div>
       <div id="live-stage">
         <canvas id="live-canvas" width="1280" height="800" tabindex="0"></canvas>
