@@ -70,6 +70,9 @@ no_implicit_optional = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+# Put the repo root on sys.path so the root-level `evals` harness package imports
+# under pytest (src layout otherwise only exposes src/ and tests/).
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["src/oli"]
