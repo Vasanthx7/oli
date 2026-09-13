@@ -87,6 +87,69 @@ _STUCK_HINT = (
 
 _SYSTEM_PROMPT = (Path(__file__).parent / "fara_system_prompt.txt").read_text(encoding="utf-8")
 
+# Auto-route: interaction-heavy or dense/cluttered-page goals go to the "careful"
+# (9B) tier — 4B grounds well on clean read/nav pages but lands near, not on, small
+# controls on busy pages (benchmark + Amazon debugging). Clean read/nav/extract
+# stays on the fast (4B) tier. Keyword heuristic over the goal text.
+_INTERACTION_TERMS = (
+    "add to cart",
+    "add to basket",
+    "add to list",
+    "wishlist",
+    "checkout",
+    "check out",
+    "buy ",
+    "purchase",
+    "place an order",
+    "order ",
+    "book ",
+    "booking",
+    "reserve",
+    "fill in",
+    "fill out",
+    "fill the",
+    "form",
+    "submit",
+    "sign in",
+    "log in",
+    "login",
+    "apply",
+    "reply",
+    "upload",
+    "subscribe",
+    "add it to",
+)
+_DENSE_DOMAINS = (
+    "amazon.",
+    "flipkart.",
+    "myntra.",
+    "ebay.",
+    "walmart.",
+    "aliexpress.",
+    "target.com",
+    "bestbuy.",
+    "booking.com",
+    "expedia.",
+    "makemytrip.",
+    "swiggy.",
+    "zomato.",
+    "duckduckgo.",
+)
+
+
+def _route_model(goal: str) -> tuple[str, str]:
+    """Pick the model tier for ``goal``. Returns (model_tag, reason)."""
+    if not config.settings.fara_autoroute:
+        return config.settings.fara_model, "autoroute-off"
+    g = goal.lower()
+    hit = next((t for t in _INTERACTION_TERMS if t in g), None) or next(
+        (d for d in _DENSE_DOMAINS if d in g), None
+    )
+    if hit:
+        return config.settings.fara_model_heavy, f"heavy ({hit.strip()})"
+    return config.settings.fara_model, "fast (read/nav)"
+
+
 # Fara key names → Playwright key names (best-effort; unknowns pass through).
 _KEY_MAP = {
     "return": "Enter",
@@ -290,7 +353,7 @@ async def _dispatch(page: Any, action: str, args: dict[str, Any]) -> tuple[bool,
     return False, f"(unsupported action: {action})"
 
 
-async def _read_page_answer(client: AsyncOpenAI, page: Any, question: str) -> str:
+async def _read_page_answer(client: AsyncOpenAI, page: Any, question: str, model: str) -> str:
     """Fara's read_page_answer_question: pull page text and answer with the model."""
     text = ""
     with contextlib.suppress(Exception):
@@ -298,7 +361,7 @@ async def _read_page_answer(client: AsyncOpenAI, page: Any, question: str) -> st
     text = (text or "")[:8000]
     with contextlib.suppress(Exception):
         r = await client.chat.completions.create(
-            model=config.settings.fara_model,
+            model=model,
             temperature=0,
             max_tokens=512,
             messages=[
@@ -342,6 +405,8 @@ async def _run(goal: str, profile: str | None) -> str:
     client = AsyncOpenAI(
         base_url=config.settings.fara_base_url, api_key=config.settings.fara_api_key
     )
+    model_tag, route_reason = _route_model(goal)
+    log.info("fara_route", model=model_tag, reason=route_reason)
 
     pw = browser = page = None
     live = live_browser.session()
@@ -381,7 +446,7 @@ async def _run(goal: str, profile: str | None) -> str:
 
             try:
                 resp = await client.chat.completions.create(
-                    model=config.settings.fara_model,
+                    model=model_tag,
                     messages=messages,  # type: ignore[arg-type]  # our dicts vs OpenAI param types
                     temperature=0,
                     max_tokens=1024,
@@ -427,7 +492,7 @@ async def _run(goal: str, profile: str | None) -> str:
 
             is_terminal, obs = await _dispatch(page, action, args)
             if isinstance(obs, str) and obs.startswith("__READ__:"):
-                answer = await _read_page_answer(client, page, obs[len("__READ__:") :])
+                answer = await _read_page_answer(client, page, obs[len("__READ__:") :], model_tag)
                 pending_obs = f"Read the page: {answer}"
                 is_terminal, obs = False, pending_obs
             if is_terminal:

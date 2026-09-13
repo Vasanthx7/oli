@@ -75,6 +75,26 @@ def test_trim_images_keeps_only_most_recent():
     )
 
 
+def test_route_model_sends_interaction_and_dense_to_heavy():
+    light = fb.config.settings.fara_model
+    heavy = fb.config.settings.fara_model_heavy
+    assert light != heavy  # sanity: two distinct tiers configured
+    # Clean read/nav/extract -> fast tier.
+    assert fb._route_model("Go to example.org and report the heading")[0] == light
+    assert fb._route_model("Tell me when Python was first released on Wikipedia")[0] == light
+    # Interaction verbs -> careful tier.
+    assert fb._route_model("search for a cable and add it to my cart")[0] == heavy
+    assert fb._route_model("fill the form and submit it")[0] == heavy
+    # Dense/bot-heavy domain -> careful tier even without an obvious verb.
+    assert fb._route_model("open amazon.in and find the cheapest usb-c cable")[0] == heavy
+
+
+def test_route_model_respects_autoroute_off(monkeypatch):
+    monkeypatch.setattr(fb.config.settings, "fara_autoroute", False)
+    # With autoroute off, everything uses the base model.
+    assert fb._route_model("add it to my cart on amazon.in")[0] == fb.config.settings.fara_model
+
+
 def test_system_prompt_vendored_verbatim():
     # The card says use the trained prompt as-is; make sure it's present and intact.
     assert "Fara" in fb._SYSTEM_PROMPT

@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     fara_base_url: str = "http://localhost:11434/v1"
     fara_api_key: str = "ollama"  # Ollama ignores it; the OpenAI client requires one.
     fara_model: str = "fara15-4b"
+    # "Careful" tier for interaction-heavy / dense-page tasks (add-to-cart, forms,
+    # commerce): 4B grounds well on clean read/nav pages but lands near — not on —
+    # small controls on cluttered pages, where 9B is reliable (benchmark + Amazon
+    # debugging). When fara_autoroute is on, browse picks this for such tasks.
+    fara_model_heavy: str = "fara15-9b"
+    fara_autoroute: bool = True
     # When the Fara host is unreachable, optionally point users at a recorded
     # walkthrough of the workflow instead of a bare error (empty = no link).
     fara_unavailable_url: str = ""

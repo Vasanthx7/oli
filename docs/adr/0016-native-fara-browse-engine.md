@@ -45,6 +45,13 @@ selected by `settings.browse_engine == "fara"`:
 - **Watch + take-control preserved.** `live_browser.attach_page(page, agent)`
   screencasts the page we own; take-control toggles an `asyncio` gate the loop
   checks at each step boundary; input is scaled to the page's real 1440×900.
+- **Two-tier auto-routing.** `browse` picks the model per task: clean read / nav /
+  extract → **Fara-4B** (fast, fits with headroom); interaction-heavy or dense-page
+  goals (add-to-cart, forms, checkout, or commerce/bot-heavy domains) → **Fara-9B**
+  (`fara_model_heavy`), which grounds small controls on cluttered pages reliably
+  where 4B lands *near* not *on* them (verified: 9B completed the Amazon add-to-cart
+  flow, self-confirmed cart 3→4; 4B could not). Keyword heuristic over the goal;
+  toggle with `fara_autoroute`.
 - **Profiles** work via a persistent context, as before.
 - **Config over Tailscale.** `FARA_BASE_URL` points at the GPU box; in production
   that's its Tailscale IP/MagicDNS name, and the host needs `OLLAMA_HOST=0.0.0.0`
