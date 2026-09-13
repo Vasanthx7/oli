@@ -52,7 +52,15 @@ selected by `settings.browse_engine == "fara"`:
   where 4B lands *near* not *on* them (verified: 9B completed the Amazon add-to-cart
   flow, self-confirmed cart 3→4; 4B could not). Keyword heuristic over the goal;
   toggle with `fara_autoroute`.
-- **Profiles** work via a persistent context, as before.
+- **Profiles** work via a persistent context, as before — and are now **auto-resolved**
+  from the goal (match by site name/label/root, reuse the profile's saved `start_url`),
+  so users never name a profile or paste a URL. A saved profile for a site is used even
+  for plain reads. When a site needs a login we don't have, browse opens it in the
+  **live view for an inline sign-in** (then the user re-asks), rather than only pointing
+  at the Profiles panel.
+- **Purchase guardrail.** browse refuses to auto-complete irreversible steps (place
+  order / pay / buy now) and offers cart + checkout for the user to finish; the Fara
+  task also carries a hard "never place an order or pay" instruction.
 - **Config over Tailscale.** `FARA_BASE_URL` points at the GPU box; in production
   that's its Tailscale IP/MagicDNS name, and the host needs `OLLAMA_HOST=0.0.0.0`
   so Ollama accepts connections beyond localhost. Default engine stays
