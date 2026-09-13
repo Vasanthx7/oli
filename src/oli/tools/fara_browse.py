@@ -29,6 +29,7 @@ import base64
 import contextlib
 import json
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
@@ -351,8 +352,10 @@ async def _dispatch(page: Any, action: str, args: dict[str, Any]) -> tuple[bool,
         # sentinel so the loop can run the follow-up QA call.
         return False, "__READ__:" + str(args.get("question", ""))
     if action == "ask_user_question":
-        # Single-user autonomous run: surface the question to the chat agent.
-        return True, f"I need input to continue: {args.get('question', '')}"
+        # Terminal-for-this-step, but a *pause* not a finish: the resumable path (see
+        # _drive/_pump) surfaces the question to the user and resumes on their reply.
+        # Sentinel lets _drive tell an ask apart from a real terminate.
+        return True, "__ASK__:" + str(args.get("question", ""))
     if action == "terminate":
         return True, str(args.get("answer", args.get("thoughts", "")))
 
@@ -407,181 +410,257 @@ async def _launch(profile: str | None) -> tuple[Any, Any, Any]:
     return pw, browser, page
 
 
-async def _run(goal: str, profile: str | None, start_url: str | None = None) -> str:
+@dataclass
+class _RunState:
+    """All mutable state of one browse run — enough to pause and later resume it.
+
+    On an ``ask_user_question`` the run stops with the browser (page/context) still
+    **open** and this object stashed in ``_paused``; the user's reply is appended and the
+    loop continues from ``step`` (see _drive/_pump/resume_paused). ADR 0016/0017 + the
+    handover takeaway in evals/browse/E2E_CASES.md."""
+
+    client: AsyncOpenAI
+    model_tag: str
+    pw: Any
+    browser: Any
+    page: Any
+    live: Any
+    attached: bool
+    agent: FaraBrowseAgent
+    messages: list[dict]
+    trace_dir: Path | None
+    step: int = 0
+    recent: list[str] = field(default_factory=list)
+    last_click_bucket: tuple | None = None
+    pending_obs: str = ""
+    last_thoughts: str = ""
+
+
+async def _new_state(goal: str, profile: str | None, start_url: str | None) -> _RunState:
+    """Launch the browser, attach the live view, seed the conversation with the goal."""
     client = AsyncOpenAI(
         base_url=config.settings.fara_base_url, api_key=config.settings.fara_api_key
     )
     model_tag, route_reason = _route_model(goal)
     log.info("fara_route", model=model_tag, reason=route_reason)
 
-    pw = browser = page = None
     live = live_browser.session()
-    attached = False
     agent = FaraBrowseAgent()
-    try:
-        pw, browser, page = await _launch(profile)
+    pw, browser, page = await _launch(profile)
+    attached = False
+    with contextlib.suppress(Exception):
+        attached = await live.attach_page(page, agent)
+
+    # Start on the profile's saved login URL (the right site + TLD, e.g. amazon.in not
+    # .com) so the model begins authenticated on the correct page.
+    if start_url:
         with contextlib.suppress(Exception):
-            attached = await live.attach_page(page, agent)
+            await page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
 
-        # Start on the profile's saved login URL (the right site + TLD, e.g. amazon.in
-        # not .com) so the model begins authenticated on the correct page.
-        if start_url:
+    first_shot = await _screenshot(page)
+    messages: list[dict] = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": _b64_data_uri(first_shot)}},
+                {"type": "text", "text": goal + _TASK_HINT + _SAFETY_SUFFIX},
+            ],
+        },
+    ]
+
+    trace_dir: Path | None = None
+    if config.settings.fara_save_traces:
+        trace_dir = config.DATA_DIR / "fara_traces" / uuid.uuid4().hex[:8]
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        (trace_dir / "goal.txt").write_text(goal, encoding="utf-8")
+        (trace_dir / "screenshot_00_start.png").write_bytes(first_shot)
+        log.info("fara_trace_dir", dir=str(trace_dir))
+
+    return _RunState(
+        client=client,
+        model_tag=model_tag,
+        pw=pw,
+        browser=browser,
+        page=page,
+        live=live,
+        attached=attached,
+        agent=agent,
+        messages=messages,
+        trace_dir=trace_dir,
+    )
+
+
+async def _append_user_reply(st: _RunState, reply: str) -> None:
+    """Resume seed: append the user's answer + a fresh screenshot of the paused page."""
+    shot = await _screenshot(st.page)
+    url = ""
+    with contextlib.suppress(Exception):
+        url = st.page.url
+    prefix = f"Current URL: {url}\n" if url else ""
+    st.messages.append(
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": _b64_data_uri(shot)}},
+                {"type": "text", "text": f"{prefix}{reply}\n{USER_MESSAGE}"},
+            ],
+        }
+    )
+    _trim_images(st.messages, MAX_IMAGES)
+
+
+async def _drive(st: _RunState) -> tuple[str, str]:
+    """Run the observe-think-act loop from ``st.step``.
+
+    Returns ``("paused", question)`` when the model asks the user something (browser
+    left open), or ``("done", answer)`` on terminate / step-limit. Raises _Unavailable
+    if the model host drops. Never closes the browser — the caller (_pump/_run) does."""
+    while st.step < MAX_STEPS:
+        st.step += 1
+        step = st.step
+        await st.agent.wait_if_paused()  # block here while the user has take-control
+
+        try:
+            resp = await st.client.chat.completions.create(
+                model=st.model_tag,
+                messages=st.messages,  # type: ignore[arg-type]  # our dicts vs OpenAI param types
+                temperature=0,
+                max_tokens=1024,
+            )
+        except Exception as e:  # noqa: BLE001
+            raise _Unavailable(str(e)) from e
+
+        text = resp.choices[0].message.content or ""
+        st.messages.append({"role": "assistant", "content": text})
+        thoughts, args = _parse(text)
+        st.last_thoughts = thoughts or st.last_thoughts
+        action = args.get("action", "terminate")
+        # Stall detector: the same action *type* three steps running (regardless of exact
+        # coords) is the form/search-box failure mode — catch it and nudge.
+        st.recent.append(action)
+        st.recent = st.recent[-3:]
+        stalled = len(st.recent) == 3 and len(set(st.recent)) == 1
+        # Dead-click loop: the EXACT same spot twice means the element isn't responding.
+        click_bucket = (
+            tuple(round(c / 30) for c in (args.get("coordinate") or []))
+            if action == "left_click"
+            else None
+        )
+        same_click = click_bucket is not None and click_bucket == st.last_click_bucket
+        st.last_click_bucket = click_bucket
+        detail = args.get("url") or args.get("query") or args.get("text") or args.get("answer")
+        log.info(
+            "fara_step",
+            step=step,
+            action=action,
+            coord=args.get("coordinate"),
+            detail=(str(detail)[:80] if detail else None),
+            stalled=stalled,
+            same_click=same_click,
+            thought=(thoughts or text.strip().splitlines()[0] if text.strip() else "")[:140],
+        )
+
+        is_terminal, obs = await _dispatch(st.page, action, args)
+        if isinstance(obs, str) and obs.startswith("__READ__:"):
+            answer = await _read_page_answer(
+                st.client, st.page, obs[len("__READ__:") :], st.model_tag
+            )
+            st.pending_obs = f"Read the page: {answer}"
+            is_terminal, obs = False, st.pending_obs
+        if is_terminal:
+            if isinstance(obs, str) and obs.startswith("__ASK__:"):
+                question = obs[len("__ASK__:") :].strip() or thoughts
+                return "paused", (question or "I need a bit more information to continue.")
+            return "done", (obs or thoughts or "(done)")
+
+        # Break a dead-click loop by physically changing the view so the next screenshot
+        # differs and the model re-grounds instead of re-clicking.
+        if same_click:
             with contextlib.suppress(Exception):
-                await page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
+                await st.page.mouse.wheel(0, 500)
 
-        first_shot = await _screenshot(page)
-        messages: list[dict] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+        with contextlib.suppress(Exception):
+            await st.page.wait_for_load_state("domcontentloaded", timeout=8000)
+
+        shot = await _screenshot(st.page)
+        url = ""
+        with contextlib.suppress(Exception):
+            url = st.page.url
+        prefix = f"Current URL: {url}\n" if url else ""
+        if same_click:
+            stuck = (
+                "You clicked the EXACT same spot again and nothing changed. Do NOT click "
+                "there again — that element isn't responding or was mis-located. The view "
+                "has been scrolled; re-read the screenshot and click a clearly DIFFERENT "
+                "element, or scroll to bring it into view.\n"
+            )
+        elif stalled:
+            stuck = _STUCK_HINTS.get(action, _STUCK_HINT) + "\n"
+        else:
+            stuck = ""
+        note = stuck + ((st.pending_obs + "\n") if st.pending_obs else "")
+        st.pending_obs = ""
+
+        if st.trace_dir is not None:
+            with contextlib.suppress(Exception):
+                (st.trace_dir / f"screenshot_{step:02d}.png").write_bytes(shot)
+                with (st.trace_dir / "steps.jsonl").open("a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps(
+                            {
+                                "step": step,
+                                "action": action,
+                                "coord": args.get("coordinate"),
+                                "detail": (str(detail)[:120] if detail else None),
+                                "stalled": stalled,
+                                "same_click": same_click,
+                                "url": url,
+                            }
+                        )
+                        + "\n"
+                    )
+        st.messages.append(
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": _b64_data_uri(first_shot)}},
-                    {"type": "text", "text": goal + _TASK_HINT + _SAFETY_SUFFIX},
+                    {"type": "image_url", "image_url": {"url": _b64_data_uri(shot)}},
+                    {"type": "text", "text": f"{prefix}{note}{USER_MESSAGE}"},
                 ],
-            },
-        ]
-
-        # Optional per-step trace (screenshots + steps.jsonl) for debugging grounding.
-        trace_dir: Path | None = None
-        if config.settings.fara_save_traces:
-            trace_dir = config.DATA_DIR / "fara_traces" / uuid.uuid4().hex[:8]
-            trace_dir.mkdir(parents=True, exist_ok=True)
-            (trace_dir / "goal.txt").write_text(goal, encoding="utf-8")
-            (trace_dir / "screenshot_00_start.png").write_bytes(first_shot)
-            log.info("fara_trace_dir", dir=str(trace_dir))
-
-        pending_obs = ""
-        recent: list[str] = []  # recent action names, for stall detection
-        last_click_bucket: tuple | None = None
-        for _step in range(MAX_STEPS):
-            await agent.wait_if_paused()  # block here while the user has control
-
-            try:
-                resp = await client.chat.completions.create(
-                    model=model_tag,
-                    messages=messages,  # type: ignore[arg-type]  # our dicts vs OpenAI param types
-                    temperature=0,
-                    max_tokens=1024,
-                )
-            except Exception as e:  # noqa: BLE001
-                raise _Unavailable(str(e)) from e
-
-            text = resp.choices[0].message.content or ""
-            messages.append({"role": "assistant", "content": text})
-            thoughts, args = _parse(text)
-            action = args.get("action", "terminate")
-            # Stall detector: the same action *type* three steps running (regardless of
-            # exact coords) is the form/search-box failure mode — e.g. scrolling around
-            # hunting for a submit button. Catch it and nudge, don't burn the budget.
-            recent.append(action)
-            recent = recent[-3:]
-            stalled = len(recent) == 3 and len(set(recent)) == 1
-            # Dead-click loop: clicking the EXACT same spot twice means the element
-            # isn't responding (a mis-grounded target). Detect it directly — the
-            # coord varies too little for the action-type stall to catch it.
-            click_bucket = (
-                tuple(round(c / 30) for c in (args.get("coordinate") or []))
-                if action == "left_click"
-                else None
-            )
-            same_click = click_bucket is not None and click_bucket == last_click_bucket
-            last_click_bucket = click_bucket
-            # Salient argument for the action, so the log shows *what* it did
-            # (which URL / what it typed), not just the action name + coords.
-            detail = args.get("url") or args.get("query") or args.get("text") or args.get("answer")
-            log.info(
-                "fara_step",
-                step=_step + 1,
-                action=action,
-                coord=args.get("coordinate"),
-                detail=(str(detail)[:80] if detail else None),
-                stalled=stalled,
-                same_click=same_click,
-                # Fall back to the first line of the raw response when the model emits
-                # no separate thoughts, so we can still see its reasoning.
-                thought=(thoughts or text.strip().splitlines()[0] if text.strip() else "")[:140],
-            )
-
-            is_terminal, obs = await _dispatch(page, action, args)
-            if isinstance(obs, str) and obs.startswith("__READ__:"):
-                answer = await _read_page_answer(client, page, obs[len("__READ__:") :], model_tag)
-                pending_obs = f"Read the page: {answer}"
-                is_terminal, obs = False, pending_obs
-            if is_terminal:
-                return obs or thoughts or "(done)"
-
-            # Break a dead-click loop by physically changing the view, so the next
-            # screenshot differs and the model re-grounds instead of re-clicking.
-            if same_click:
-                with contextlib.suppress(Exception):
-                    await page.mouse.wheel(0, 500)
-
-            with contextlib.suppress(Exception):
-                await page.wait_for_load_state("domcontentloaded", timeout=8000)
-
-            shot = await _screenshot(page)
-            url = ""
-            with contextlib.suppress(Exception):
-                url = page.url
-            prefix = f"Current URL: {url}\n" if url else ""
-            if same_click:
-                stuck = (
-                    "You clicked the EXACT same spot again and nothing changed. Do NOT "
-                    "click there again — that element isn't responding or was mis-located. "
-                    "The view has been scrolled; re-read the screenshot and click a "
-                    "clearly DIFFERENT element (e.g. the 'Add to Cart' button on the "
-                    "right), or scroll to bring it into view.\n"
-                )
-            elif stalled:
-                stuck = _STUCK_HINTS.get(action, _STUCK_HINT) + "\n"
-            else:
-                stuck = ""
-            note = stuck + ((pending_obs + "\n") if pending_obs else "")
-            pending_obs = ""
-
-            if trace_dir is not None:
-                with contextlib.suppress(Exception):
-                    (trace_dir / f"screenshot_{_step + 1:02d}.png").write_bytes(shot)
-                    with (trace_dir / "steps.jsonl").open("a", encoding="utf-8") as f:
-                        f.write(
-                            json.dumps(
-                                {
-                                    "step": _step + 1,
-                                    "action": action,
-                                    "coord": args.get("coordinate"),
-                                    "detail": (str(detail)[:120] if detail else None),
-                                    "stalled": stalled,
-                                    "same_click": same_click,
-                                    "url": url,
-                                }
-                            )
-                            + "\n"
-                        )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": _b64_data_uri(shot)}},
-                        {"type": "text", "text": f"{prefix}{note}{USER_MESSAGE}"},
-                    ],
-                }
-            )
-            _trim_images(messages, MAX_IMAGES)
-
-        return (
-            "I couldn't finish within the step limit. Here's the last thing I saw: "
-            f"{thoughts[:300]}"
+            }
         )
+        _trim_images(st.messages, MAX_IMAGES)
+
+    return "done", (
+        "I couldn't finish within the step limit. Here's the last thing I saw: "
+        f"{st.last_thoughts[:300]}"
+    )
+
+
+async def _close(st: _RunState) -> None:
+    """Tear down the browser + live-view attachment for a finished (not paused) run."""
+    if st.attached:
+        with contextlib.suppress(Exception):
+            await st.live.detach()
+    with contextlib.suppress(Exception):
+        if st.browser is not None:
+            await st.browser.close()  # persistent context or browser both have close()
+    with contextlib.suppress(Exception):
+        if st.pw is not None:
+            await st.pw.stop()
+
+
+async def _run(goal: str, profile: str | None, start_url: str | None = None) -> str:
+    """Single-shot, NON-resumable drive (evals / back-compat).
+
+    An ``ask_user_question`` returns the question text and ends the run — there is no
+    interactive user here. The resumable production path is ``browse_fara``."""
+    st = await _new_state(goal, profile, start_url)
+    try:
+        _kind, payload = await _drive(st)
+        return payload
     finally:
-        if attached:
-            with contextlib.suppress(Exception):
-                await live.detach()
-        with contextlib.suppress(Exception):
-            if browser is not None:
-                await browser.close()  # persistent context or browser both have close()
-        with contextlib.suppress(Exception):
-            if pw is not None:
-                await pw.stop()
+        await _close(st)
 
 
 def _unavailable_message() -> str:
@@ -601,15 +680,85 @@ def _unavailable_message() -> str:
 # One headless Chromium at a time keeps memory sane on a small VM.
 _lock = asyncio.Lock()
 
+# A run paused at an ask_user_question, its browser still open, awaiting the user's reply.
+# Single-user app → at most one paused browse at a time (the lock serializes browses).
+# This global IS the handover signal: the turn layer checks has_paused_browse() and routes
+# the next user message to resume_paused_browse() instead of starting a fresh turn.
+_paused: _RunState | None = None
+
+
+def has_paused_browse() -> bool:
+    """True when a browse is paused waiting for the user to answer a question."""
+    return _paused is not None
+
+
+async def discard_paused_browse() -> None:
+    """Abandon a paused browse (e.g. user moved on) and free its browser."""
+    global _paused
+    if _paused is not None:
+        st, _paused = _paused, None
+        with contextlib.suppress(Exception):
+            await _close(st)
+        log.info("fara_paused_discarded")
+
+
+async def _pump(st: _RunState) -> str:
+    """Drive ``st`` to a pause or a finish, handling teardown + failure uniformly.
+
+    On pause: stash ``st`` in ``_paused`` (browser stays open) and return the question
+    tagged with HANDOVER_PREFIX. On finish/error: close the browser and return the text."""
+    global _paused
+    try:
+        kind, payload = await _drive(st)
+    except _Unavailable as e:
+        log.warning("fara_unavailable", error=str(e))
+        await _close(st)
+        return _unavailable_message()
+    except Exception as e:  # noqa: BLE001
+        log.warning("fara_browse_failed", error=str(e))
+        await _close(st)
+        return f"browse failed: {e}"
+    if kind == "paused":
+        _paused = st
+        log.info("fara_paused_for_user", step=st.step, question=payload[:120])
+        return payload
+    await _close(st)
+    return payload
+
 
 async def browse_fara(goal: str, profile: str | None = None, start_url: str | None = None) -> str:
-    """Drive a browser toward ``goal`` with the native Fara-1.5 loop (no fallback)."""
+    """Drive a browser toward ``goal`` with the native Fara-1.5 loop (no fallback).
+
+    Resumable: if the model asks the user something, the run pauses with the browser open
+    (``has_paused_browse()`` becomes true) and returns the question; the next user message
+    resumes it via :func:`resume_paused_browse`."""
+    # A brand-new browse supersedes any stale paused one (user started something else).
+    await discard_paused_browse()
     async with _lock:
         try:
-            return await _run(goal, profile, start_url)
+            st = await _new_state(goal, profile, start_url)
         except _Unavailable as e:
             log.warning("fara_unavailable", error=str(e))
             return _unavailable_message()
         except Exception as e:  # noqa: BLE001
             log.warning("fara_browse_failed", error=str(e))
             return f"browse failed: {e}"
+        return await _pump(st)
+
+
+async def resume_paused_browse(reply: str) -> str:
+    """Resume the paused browse with the user's ``reply``; returns the next result.
+
+    May itself pause again (another question) or finish. If nothing is paused, says so."""
+    global _paused
+    if _paused is None:
+        return "There's no browsing task waiting on your input right now."
+    async with _lock:
+        st, _paused = _paused, None
+        try:
+            await _append_user_reply(st, reply)
+        except Exception as e:  # noqa: BLE001 — page died while paused
+            log.warning("fara_resume_failed", error=str(e))
+            await _close(st)
+            return "I lost the browser session while waiting — please ask me again."
+        return await _pump(st)
