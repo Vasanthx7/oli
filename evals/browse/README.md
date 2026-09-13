@@ -69,6 +69,10 @@ uv run python -m evals.browse.run_vendored              --max-tier 4 --stamp ven
 uv run python -m evals.browse.compare fara-ab vendored-ab
 ```
 
+**Outcome (2026-09-13, fara15-4b):** they match — 10/10 agreement, both 8/10, and the
+vendored loop is 2–3× faster wall-clock. Full result + why-we're-faster + takeaways for
+handover/complex flows in [`AB_VENDORED_VS_OFFICIAL.md`](AB_VENDORED_VS_OFFICIAL.md).
+
 `compare.py` prints a per-scenario PASS/FAIL table, success-rate + latency deltas, and a
 verdict (match → keep vendored; official leads → adopting the harness is justified). Run
 both at the same step budget for the fairest fight — note `run_fara` defaults to
