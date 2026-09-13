@@ -24,3 +24,4 @@ Format follows [Michael Nygard's ADR template](https://cognitect.com/blog/2011/1
 | [0014](0014-model-routing-and-harness-guardrails.md) | Cheap/strong model routing + per-turn harness guardrails | Accepted |
 | [0016](0016-native-fara-browse-engine.md) | Native Fara-1.5 browse engine (local, no cloud fallback) | Accepted |
 | [0017](0017-cloud-provider-failover-local-vision-only.md) | Cloud provider failover for chat; local model for computer-use only | Accepted |
+| [0018](0018-resumable-browse-handover.md) | Resumable browse handover (ask the user mid-task, then continue) | Accepted |

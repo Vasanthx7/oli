@@ -17,9 +17,15 @@ uv run python -m evals.browse.run_vendored --ids e3-amazon-add-cable-stop --auto
 
 The "handle" column references the harness takeaways in
 [`AB_VENDORED_VS_OFFICIAL.md`](AB_VENDORED_VS_OFFICIAL.md): **#1** resumable
-`ask_user_question` handover, **#2** critical-point confirmation, **#3** per-turn
-checkpoint/resume, **#4** `facts` working-memory re-injection, **#5** text-observation
-fallback for dense/forms, **#6** action validation. "done" = already in `fara_browse.py`.
+`ask_user_question` handover (**✅ implemented — ADR 0018**), **#2** critical-point
+confirmation, **#3** per-turn checkpoint/resume, **#4** `facts` working-memory
+re-injection, **#5** text-observation fallback for dense/forms, **#6** action validation.
+"done" = already in `fara_browse.py`.
+
+> **Status:** #1 (resumable handover) is now live — a browse that hits an
+> `ask_user_question` pauses with the browser open and resumes on the user's next reply
+> (`has_paused_browse()` / `resume_paused_browse`). Cases e5/e9/e10/e11/e12 now complete
+> the ask→answer→continue loop instead of dead-ending.
 
 ## The 15 cases
 

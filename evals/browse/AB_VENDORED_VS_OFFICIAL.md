@@ -55,7 +55,7 @@ Our end goal is **handing tasks over to the user** and **completing complex end-
 flows**. The official harness is strong at exactly these, and most of what it does is
 adoptable without giving up our latency edge.
 
-### 1. Make `ask_user_question` a *resumable handover*, not a dead-end (highest value)
+### 1. Make `ask_user_question` a *resumable handover*, not a dead-end (highest value) — ✅ DONE (ADR 0018)
 Our vendored **system prompt already contains the full "critical points" guidance** — the
 model is told to pause and `ask_user_question` when (1) required info is missing, (2) the
 task is ambiguous, or (3) an irreversible action isn't authorized. So **our model already
@@ -64,7 +64,7 @@ asks.** The gap is purely in the loop: today we treat the question as terminal �
 ```python
 # fara_browse.py (today)
 if action == "ask_user_question":
-    return True, f"I need input to continue: {args.get('question','')}"   # run ends, state lost
+    return True, f"I need input to continue: {args.get('question', '')}"  # run ends, state lost
 ```
 
 The official harness instead sets `WAITING_FOR_USER`, **persists state** (chat history,

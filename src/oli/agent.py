@@ -15,6 +15,7 @@ messages for the UI/history, and extracting durable memories after the turn.
 """
 
 import asyncio
+import contextlib
 import time
 from collections.abc import AsyncGenerator
 
@@ -126,6 +127,33 @@ def _text(content) -> str:
     return str(content)
 
 
+async def _resume_browse_turn(
+    store: Storage, conversation_id: str, reply: str
+) -> AsyncGenerator[dict, None]:
+    """Feed the user's reply into a paused browse and stream the result as a browse turn.
+
+    The result is either the browse's next question (it paused again — the next turn will
+    resume once more) or its final answer; either way it is already natural language, so
+    we surface it directly as the assistant's message (no extra LLM round-trip)."""
+    from .tools import fara_browse
+
+    metrics.TOOL_CALLS.labels(tool="browse").inc()
+    yield {"type": "tool_start", "name": "browse", "args": {"resume": reply}}
+    try:
+        result = await fara_browse.resume_paused_browse(reply)
+    except Exception as e:  # noqa: BLE001 — surface cleanly, never leave the turn hanging
+        metrics.AGENT_ERRORS.labels(type=type(e).__name__).inc()
+        with contextlib.suppress(Exception):
+            await fara_browse.discard_paused_browse()
+        yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+        return
+    await store.add_message(conversation_id, "tool", result, tool_name="browse")
+    yield {"type": "tool_end", "name": "browse", "result": result[:_TOOL_PREVIEW_LEN]}
+    await store.add_message(conversation_id, "assistant", result)
+    _spawn_extraction(conversation_id, reply, result)
+    yield {"type": "done", "content": result}
+
+
 async def run_turn(
     store: Storage,
     conversation_id: str,
@@ -134,6 +162,17 @@ async def run_turn(
     """Run one full user turn, yielding events. Persists user + assistant + tool messages."""
     metrics.CHAT_TURNS.inc()
     await store.add_message(conversation_id, "user", user_message)
+
+    # Resumable browse handover: if a browse paused to ask the user something, THIS
+    # message is the answer — resume that run instead of starting a fresh agent turn
+    # (see oli.tools.fara_browse and evals/browse/E2E_CASES.md #1).
+    from .tools import fara_browse
+
+    if fara_browse.has_paused_browse():
+        async for event in _resume_browse_turn(store, conversation_id, user_message):
+            yield event
+        return
+
     seed = _history_to_lc(await store.get_messages(conversation_id))
 
     graph = get_graph()
