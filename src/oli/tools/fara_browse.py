@@ -401,7 +401,7 @@ async def _launch(profile: str | None) -> tuple[Any, Any, Any]:
     return pw, browser, page
 
 
-async def _run(goal: str, profile: str | None) -> str:
+async def _run(goal: str, profile: str | None, start_url: str | None = None) -> str:
     client = AsyncOpenAI(
         base_url=config.settings.fara_base_url, api_key=config.settings.fara_api_key
     )
@@ -416,6 +416,12 @@ async def _run(goal: str, profile: str | None) -> str:
         pw, browser, page = await _launch(profile)
         with contextlib.suppress(Exception):
             attached = await live.attach_page(page, agent)
+
+        # Start on the profile's saved login URL (the right site + TLD, e.g. amazon.in
+        # not .com) so the model begins authenticated on the correct page.
+        if start_url:
+            with contextlib.suppress(Exception):
+                await page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
 
         first_shot = await _screenshot(page)
         messages: list[dict] = [
@@ -588,11 +594,11 @@ def _unavailable_message() -> str:
 _lock = asyncio.Lock()
 
 
-async def browse_fara(goal: str, profile: str | None = None) -> str:
+async def browse_fara(goal: str, profile: str | None = None, start_url: str | None = None) -> str:
     """Drive a browser toward ``goal`` with the native Fara-1.5 loop (no fallback)."""
     async with _lock:
         try:
-            return await _run(goal, profile)
+            return await _run(goal, profile, start_url)
         except _Unavailable as e:
             log.warning("fara_unavailable", error=str(e))
             return _unavailable_message()

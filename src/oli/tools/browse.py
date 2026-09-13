@@ -74,6 +74,22 @@ def _extract_result(history) -> str:
     return str(history)
 
 
+def _login_prompt(res: dict) -> str:
+    """Message asking the user to set up / finish a login, when browse needs one."""
+    label = res.get("label") or res.get("name")
+    if label:
+        return (
+            f"I have a saved browser profile for **{label}** but it isn't logged in "
+            "yet. Open the 🔐 Profiles panel and finish signing in to it once "
+            "(your password never reaches me), then ask me again."
+        )
+    return (
+        "That needs me to be signed in to the site, and I don't have a saved login "
+        "for it. Open the 🔐 Profiles panel, add a profile for the site and sign in "
+        "once (your password never reaches me), then ask me again."
+    )
+
+
 async def browse(goal: str, profile: str | None = None) -> str:
     """Drive a headless browser toward ``goal``.
 
@@ -85,11 +101,27 @@ async def browse(goal: str, profile: str | None = None) -> str:
     native Fara-1.5 computer-use loop (local Ollama, no cloud fallback — see
     :mod:`oli.tools.fara_browse` and ADR 0016); anything else uses the legacy
     browser-use agent below.
+
+    Profiles are resolved automatically: the user need not name a profile or paste a
+    URL. When ``profile`` isn't given we match the goal to a saved profile by site
+    and reuse its login URL; if the site needs a login we don't have, we ask the user
+    to set one up; otherwise we browse normally (the web-search-style fallback).
     """
+    start_url: str | None = None
+    if not profile:
+        with contextlib.suppress(Exception):
+            res = await profiles.resolve_for_goal(goal)
+            if res.get("action") == "use":
+                profile = res.get("name")
+                start_url = res.get("start_url")
+            elif res.get("action") == "login":
+                return _login_prompt(res)
+            # "none" -> browse logged-out (normal browse / web-search fallback)
+
     if config.settings.browse_engine == "fara":
         from . import fara_browse
 
-        return await fara_browse.browse_fara(goal, profile=profile)
+        return await fara_browse.browse_fara(goal, profile=profile, start_url=start_url)
 
     try:
         from browser_use import Agent, BrowserSession
@@ -204,8 +236,11 @@ SCHEMA = {
             "enough — i.e. when the task needs interaction, multi-step navigation, or a "
             "dynamic/JavaScript-heavy site. Describe the goal in plain language "
             "(e.g. 'Go to news.ycombinator.com and list the top 3 story titles'). "
-            "To act on a site the user is logged into, pass 'profile' with the name of "
-            "one of their saved browser profiles; never ask for or pass passwords."
+            "For tasks on a site the user has an account on (their cart, orders, etc.), "
+            "just say so in the goal (e.g. 'check my Amazon cart') — the right saved "
+            "login is matched automatically; you do NOT need to ask the user for a "
+            "profile name or a URL, and never ask for or pass passwords. If no login "
+            "exists, browse returns a message telling the user how to set one up."
         ),
         "parameters": {
             "type": "object",
@@ -217,8 +252,9 @@ SCHEMA = {
                 "profile": {
                     "type": "string",
                     "description": (
-                        "Optional name of a saved, logged-in browser profile to reuse "
-                        "(e.g. 'twitter'). Omit for public browsing."
+                        "Rarely needed: a saved profile is matched automatically from "
+                        "the goal. Only set this to force a specific profile by name; "
+                        "omit it otherwise (including for public browsing)."
                     ),
                 },
             },
