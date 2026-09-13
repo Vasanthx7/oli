@@ -76,9 +76,13 @@ class LiveSession:
         self.running = False
         # Attached-mode state (watching an autonomous browse run).
         self._owns_browser = True  # False when tapping browser-use's browser
-        self._agent: Any = None  # the browser-use Agent, for pause/resume
+        self._agent: Any = None  # the browser-use / Fara agent, for pause/resume
         self.agent_mode = False  # True while attached to an agent's browser
         self.controlled = False  # True once the user has "taken control" (agent paused)
+        # Viewport used to scale incoming [0,1] input fractions to page pixels. The
+        # attached page may render larger than our default (Fara uses 1440x900), so
+        # attach_page overrides this to the page's real size.
+        self._input_viewport: dict[str, int] = VIEWPORT
 
     # --- lifecycle -------------------------------------------------------
 
@@ -171,6 +175,45 @@ class LiveSession:
             self._agent = agent
             self.running = True
             log.info("live_browser_attached_agent")
+            return True
+
+    async def attach_page(self, page: Any, agent: Any) -> bool:
+        """Tap the screencast onto a Playwright ``page`` that *we* own (the Fara
+        engine's page), so the user can watch and take control.
+
+        Unlike :meth:`attach_agent` (which connects a second CDP client to
+        browser-use's browser via a URL), here we already hold the page object, so
+        we open a CDP session directly on it. Input is scaled to the page's real
+        viewport. Detaching stops our tap but never closes the page — the Fara
+        engine owns its browser lifecycle.
+
+        ``agent`` must expose ``pause()``/``resume()`` for take-control. Returns
+        ``False`` (no-op) if a live session is already up.
+        """
+        async with self._lock:
+            if self.running:
+                return False
+            try:
+                self._page = page
+                self._context = page.context
+                self._cdp = await self._context.new_cdp_session(page)
+                self._cdp.on("Page.screencastFrame", self._on_frame)
+                await self._cdp.send("Page.startScreencast", SCREENCAST)
+            except Exception as e:  # noqa: BLE001
+                log.warning("live_attach_page_failed", error=str(e))
+                self._reset()
+                return False
+
+            vp = None
+            with contextlib.suppress(Exception):
+                vp = page.viewport_size
+            self._input_viewport = vp or VIEWPORT
+            self._owns_browser = False
+            self.agent_mode = True
+            self.controlled = False
+            self._agent = agent
+            self.running = True
+            log.info("live_browser_attached_page")
             return True
 
     async def detach(self) -> None:
@@ -268,6 +311,7 @@ class LiveSession:
         self._agent = None
         self.agent_mode = False
         self.controlled = False
+        self._input_viewport = VIEWPORT
 
     # --- streaming -------------------------------------------------------
 
@@ -336,8 +380,8 @@ class LiveSession:
             log.debug("live_input_failed", kind=kind, error=str(e))
 
     async def _mouse(self, kind: str, event: dict) -> None:
-        x = float(event.get("xr", 0)) * VIEWPORT["width"]
-        y = float(event.get("yr", 0)) * VIEWPORT["height"]
+        x = float(event.get("xr", 0)) * self._input_viewport["width"]
+        y = float(event.get("yr", 0)) * self._input_viewport["height"]
         cdp_type = {
             "mousemove": "mouseMoved",
             "mousedown": "mousePressed",
@@ -349,8 +393,8 @@ class LiveSession:
         await self._cdp.send("Input.dispatchMouseEvent", params)
 
     async def _wheel(self, event: dict) -> None:
-        x = float(event.get("xr", 0.5)) * VIEWPORT["width"]
-        y = float(event.get("yr", 0.5)) * VIEWPORT["height"]
+        x = float(event.get("xr", 0.5)) * self._input_viewport["width"]
+        y = float(event.get("yr", 0.5)) * self._input_viewport["height"]
         await self._cdp.send(
             "Input.dispatchMouseEvent",
             {

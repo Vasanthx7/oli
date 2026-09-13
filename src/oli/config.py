@@ -80,6 +80,23 @@ class Settings(BaseSettings):
     # per step, so it is paced to this ceiling to avoid 429s (0 = unlimited).
     browser_max_rpm: int = 27
 
+    # --- Browse engine ---
+    # "browser-use" = the legacy DOM+screenshot agent on the browser_* endpoint.
+    # "fara" = the native Fara-1.5 computer-use loop (vision-only, its own action
+    # loop) against a local Ollama serving Fara1.5-4B. See ADR 0016. The Fara path
+    # has NO cloud fallback by design (see fara_browse): if the model host is
+    # offline the tool returns a clear "unavailable" message rather than burning
+    # Groq's rate-limited quota.
+    browse_engine: str = "browser-use"
+    # Local Ollama serving the Fara model. In production the deploy VM reaches back
+    # to the developer's machine, so this is typically a LAN URL, not localhost.
+    fara_base_url: str = "http://localhost:11434/v1"
+    fara_api_key: str = "ollama"  # Ollama ignores it; the OpenAI client requires one.
+    fara_model: str = "fara15-4b"
+    # When the Fara host is unreachable, optionally point users at a recorded
+    # walkthrough of the workflow instead of a bare error (empty = no link).
+    fara_unavailable_url: str = ""
+
     # Speech-to-text (Groq Whisper). turbo is fast + cheap; large-v3 is most accurate.
     stt_model: str = "whisper-large-v3-turbo"
 

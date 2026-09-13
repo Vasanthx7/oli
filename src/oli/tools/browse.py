@@ -80,7 +80,17 @@ async def browse(goal: str, profile: str | None = None) -> str:
     When ``profile`` names a saved browser profile, the run reuses that profile's
     authenticated cookies (from a prior human login) so it can act on logged-in
     pages. Credentials are never passed here — only the profile *name*.
+
+    The engine is selected by ``settings.browse_engine``: ``"fara"`` routes to the
+    native Fara-1.5 computer-use loop (local Ollama, no cloud fallback — see
+    :mod:`oli.tools.fara_browse` and ADR 0016); anything else uses the legacy
+    browser-use agent below.
     """
+    if config.settings.browse_engine == "fara":
+        from . import fara_browse
+
+        return await fara_browse.browse_fara(goal, profile=profile)
+
     try:
         from browser_use import Agent, BrowserSession
     except Exception as e:  # noqa: BLE001
