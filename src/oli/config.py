@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # When the Fara host is unreachable, optionally point users at a recorded
     # walkthrough of the workflow instead of a bare error (empty = no link).
     fara_unavailable_url: str = ""
+    # Debug aid: save per-step screenshots + a steps.jsonl under data/fara_traces/.
+    # Off by default (extra disk/latency); flip on to inspect grounding failures.
+    fara_save_traces: bool = False
 
     # Speech-to-text (Groq Whisper). turbo is fast + cheap; large-v3 is most accurate.
     stt_model: str = "whisper-large-v3-turbo"

@@ -28,6 +28,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
@@ -43,7 +44,10 @@ log = get_logger(__name__)
 # coordinates come back in a normalized 0–DISPLAY_SIZE space and scale to pixels.
 VIEWPORT = {"width": 1440, "height": 900}
 DISPLAY_SIZE = 1000
-MAX_STEPS = 12
+# Local Fara has no per-minute rate limit (the browser-use path's MAX_STEPS=12 was a
+# Groq-rate compromise), and real interactive flows — search → open result → scroll →
+# add to cart → confirm — need the room. Keep it bounded so a confused run still ends.
+MAX_STEPS = 24
 MAX_IMAGES = 3  # keep only the most recent N screenshots in the prompt
 USER_MESSAGE = "Here is the next screenshot. Think about what to do next."
 
@@ -360,8 +364,18 @@ async def _run(goal: str, profile: str | None) -> str:
             },
         ]
 
+        # Optional per-step trace (screenshots + steps.jsonl) for debugging grounding.
+        trace_dir: Path | None = None
+        if config.settings.fara_save_traces:
+            trace_dir = config.DATA_DIR / "fara_traces" / uuid.uuid4().hex[:8]
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            (trace_dir / "goal.txt").write_text(goal, encoding="utf-8")
+            (trace_dir / "screenshot_00_start.png").write_bytes(first_shot)
+            log.info("fara_trace_dir", dir=str(trace_dir))
+
         pending_obs = ""
         recent: list[str] = []  # recent action names, for stall detection
+        last_click_bucket: tuple | None = None
         for _step in range(MAX_STEPS):
             await agent.wait_if_paused()  # block here while the user has control
 
@@ -385,13 +399,30 @@ async def _run(goal: str, profile: str | None) -> str:
             recent.append(action)
             recent = recent[-3:]
             stalled = len(recent) == 3 and len(set(recent)) == 1
+            # Dead-click loop: clicking the EXACT same spot twice means the element
+            # isn't responding (a mis-grounded target). Detect it directly — the
+            # coord varies too little for the action-type stall to catch it.
+            click_bucket = (
+                tuple(round(c / 30) for c in (args.get("coordinate") or []))
+                if action == "left_click"
+                else None
+            )
+            same_click = click_bucket is not None and click_bucket == last_click_bucket
+            last_click_bucket = click_bucket
+            # Salient argument for the action, so the log shows *what* it did
+            # (which URL / what it typed), not just the action name + coords.
+            detail = args.get("url") or args.get("query") or args.get("text") or args.get("answer")
             log.info(
                 "fara_step",
                 step=_step + 1,
                 action=action,
                 coord=args.get("coordinate"),
+                detail=(str(detail)[:80] if detail else None),
                 stalled=stalled,
-                thought=thoughts[:140],
+                same_click=same_click,
+                # Fall back to the first line of the raw response when the model emits
+                # no separate thoughts, so we can still see its reasoning.
+                thought=(thoughts or text.strip().splitlines()[0] if text.strip() else "")[:140],
             )
 
             is_terminal, obs = await _dispatch(page, action, args)
@@ -402,6 +433,12 @@ async def _run(goal: str, profile: str | None) -> str:
             if is_terminal:
                 return obs or thoughts or "(done)"
 
+            # Break a dead-click loop by physically changing the view, so the next
+            # screenshot differs and the model re-grounds instead of re-clicking.
+            if same_click:
+                with contextlib.suppress(Exception):
+                    await page.mouse.wheel(0, 500)
+
             with contextlib.suppress(Exception):
                 await page.wait_for_load_state("domcontentloaded", timeout=8000)
 
@@ -410,9 +447,39 @@ async def _run(goal: str, profile: str | None) -> str:
             with contextlib.suppress(Exception):
                 url = page.url
             prefix = f"Current URL: {url}\n" if url else ""
-            stuck = (_STUCK_HINTS.get(action, _STUCK_HINT) + "\n") if stalled else ""
+            if same_click:
+                stuck = (
+                    "You clicked the EXACT same spot again and nothing changed. Do NOT "
+                    "click there again — that element isn't responding or was mis-located. "
+                    "The view has been scrolled; re-read the screenshot and click a "
+                    "clearly DIFFERENT element (e.g. the 'Add to Cart' button on the "
+                    "right), or scroll to bring it into view.\n"
+                )
+            elif stalled:
+                stuck = _STUCK_HINTS.get(action, _STUCK_HINT) + "\n"
+            else:
+                stuck = ""
             note = stuck + ((pending_obs + "\n") if pending_obs else "")
             pending_obs = ""
+
+            if trace_dir is not None:
+                with contextlib.suppress(Exception):
+                    (trace_dir / f"screenshot_{_step + 1:02d}.png").write_bytes(shot)
+                    with (trace_dir / "steps.jsonl").open("a", encoding="utf-8") as f:
+                        f.write(
+                            json.dumps(
+                                {
+                                    "step": _step + 1,
+                                    "action": action,
+                                    "coord": args.get("coordinate"),
+                                    "detail": (str(detail)[:120] if detail else None),
+                                    "stalled": stalled,
+                                    "same_click": same_click,
+                                    "url": url,
+                                }
+                            )
+                            + "\n"
+                        )
             messages.append(
                 {
                     "role": "user",
