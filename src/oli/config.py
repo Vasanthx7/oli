@@ -77,7 +77,10 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str = "openai/gpt-oss-120b"
-    groq_fast_model: str = "llama-3.1-8b-instant"
+    # Fast tier (intent classifier + simple chat turns). gpt-oss-20b is the small sibling
+    # of the 120b — tool-capable and on the same account. (The old llama-3.1-8b-instant
+    # default is no longer served on our Groq plan — it 404s.)
+    groq_fast_model: str = "openai/gpt-oss-20b"
 
     # Provider 2 — Mistral (failover). Add a MISTRAL_API_KEY to enable it; with no key
     # it is dropped from the chain (no dead fallback). Endpoints/models are Mistral's.
