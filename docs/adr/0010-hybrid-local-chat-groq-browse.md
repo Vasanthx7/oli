@@ -1,7 +1,9 @@
 # 10. Hybrid inference: local model for chat, Groq for browsing
 
 Date: 2026-09-09
-Status: Accepted
+Status: Superseded by ADR 0017 (cloud provider failover for chat; local model for
+computer-use only). This ADR put chat on a local model and the browser on Groq; ADR 0017
+inverts that split — cloud (Groq→Mistral) for all text work, local for computer-use only.
 
 ## Context
 

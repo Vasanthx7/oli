@@ -5,9 +5,10 @@ Project guidance for Claude Code. Loaded automatically each session — keep it 
 ## What this is
 
 **Oli** — a single-user personal assistant: FastAPI + an SSE web UI, a LangGraph agent
-with tools (web search/fetch, autonomous `browse` via browser-use, memory), a live
-browser view (CDP screencast), and background scheduled tasks. All Python, managed
-with `uv`.
+with tools (web search/fetch, autonomous `browse` via a local Fara-1.5 computer-use
+engine, memory), a live browser view (CDP screencast), and background scheduled tasks.
+Cloud LLMs (Groq → Mistral failover) run all text work; the local model is used only for
+computer-use. All Python, managed with `uv`.
 
 ## Branching & release flow
 

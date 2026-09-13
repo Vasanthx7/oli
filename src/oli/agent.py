@@ -22,7 +22,7 @@ import structlog
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 
-from . import memory, metrics
+from . import memory, metrics, providers
 from .agent_graph import RECURSION_LIMIT, get_graph
 from .config import settings
 from .llm import LLMClient
@@ -33,6 +33,15 @@ log = get_logger(__name__)
 
 # Tool results echoed to the UI are trimmed; the model still sees the full text.
 _TOOL_PREVIEW_LEN = 500
+
+# Friendly, specific message when the whole cloud provider chain is unreachable, so the
+# user sees an actionable error state rather than a raw exception (see ADR 0017).
+_ALL_PROVIDERS_DOWN = (
+    "I couldn't reach any of the chat providers just now (they may be down or "
+    "rate-limited). Please try again in a moment."
+)
+_CONNECTION_ERROR_TYPES = ("APIConnectionError", "APITimeoutError", "InternalServerError")
+
 
 # User-facing note when a per-turn guardrail (see config) cuts a turn short.
 _GUARDRAIL_MESSAGES = {
@@ -139,6 +148,7 @@ async def run_turn(
     tool_calls_made = 0
     tokens_used = 0
     stop_reason: str | None = None
+    fallback_notified = False  # emit the "answered via fallback" notice at most once
 
     # Correlate the LangSmith trace with this turn's logs via the request id.
     config: dict = {"recursion_limit": RECURSION_LIMIT}
@@ -172,6 +182,18 @@ async def run_turn(
                 elif kind == "on_chat_model_end":
                     # Token/latency metrics count every model call (classify + agent).
                     tokens_used += _record_llm_metrics(event, llm_starts)
+                    # If a non-primary provider answered, the cloud chain failed over —
+                    # tell the user once (an otherwise-silent switch — see ADR 0017).
+                    answering_model = (event.get("metadata") or {}).get("ls_model_name")
+                    if not fallback_notified and providers.is_fallback_model(answering_model):
+                        fallback_notified = True
+                        name = providers.provider_of_model(answering_model)
+                        log.info("provider_failover", answered_by=name, model=answering_model)
+                        yield {
+                            "type": "notice",
+                            "level": "warning",
+                            "message": f"The primary model was unavailable — answered via {name}.",
+                        }
                     msg = event["data"]["output"]
                     # The agent message with no tool calls is the final answer.
                     if from_agent and not getattr(msg, "tool_calls", None):
@@ -226,7 +248,13 @@ async def run_turn(
         )
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI cleanly
         metrics.AGENT_ERRORS.labels(type=type(e).__name__).inc()
-        yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+        # When the whole cloud chain is unreachable, show a friendly, actionable state
+        # instead of a raw connection traceback (see ADR 0017).
+        if type(e).__name__ in _CONNECTION_ERROR_TYPES:
+            log.warning("all_providers_unreachable", error=f"{type(e).__name__}: {e}")
+            yield {"type": "error", "message": _ALL_PROVIDERS_DOWN}
+        else:
+            yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
         return
 
     if stop_reason:

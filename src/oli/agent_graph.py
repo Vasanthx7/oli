@@ -8,21 +8,19 @@ the canonical ReAct shape:
 The `agent` node injects the personality prompt and any recalled memories at call
 time (they live outside the persisted message state), binds the tools, and calls
 the model. `tools_condition` routes to the ToolNode whenever the model requests a
-tool, then back to the agent. The LLM is provider-agnostic: a ChatOpenAI client
-pointed at Groq's OpenAI-compatible endpoint (swap via settings — see ADR 0006).
+tool, then back to the agent. The LLM is the resilient cloud chain (Groq -> Mistral
+failover) built in :mod:`oli.providers` — see ADR 0006/0017.
 """
 
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.runnables import Runnable
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from pydantic import SecretStr
 
-from . import intent, memory, tools
-from .config import settings
+from . import intent, memory, providers, tools
 from .personality import system_prompt
 
 # Safety rail: max agent<->tools laps before LangGraph aborts (was MAX_TOOL_ITERATIONS).
@@ -35,23 +33,15 @@ class State(TypedDict, total=False):
     intent: dict
 
 
-def build_model(model: str | None = None) -> ChatOpenAI:
-    """Provider-agnostic chat model pointed at the configured chat endpoint.
+def build_model(tier: str = "reasoning", *, tools: list | None = None) -> Runnable:
+    """A tool-bound chat model over the cloud provider chain (Groq -> Mistral failover).
 
-    Uses the `chat_*` settings, which may target a local model (e.g. Ollama) while
-    the browser tool stays on Groq — see ADR 0010. `api_key` is required by the
-    OpenAI client but is a dummy for local servers. `model` overrides which model id
-    to use on that same endpoint (the fast tier reuses this endpoint — see ADR 0014).
+    ``tier`` picks the strong (``"reasoning"``) or cheap (``"fast"``) model id per
+    provider; the returned Runnable tries the primary and fails over to the rest — see
+    :mod:`oli.providers` and ADR 0017. ``stream_usage`` emits token usage on the final
+    streamed chunk so ``run_turn`` can record prompt/completion metrics.
     """
-    return ChatOpenAI(
-        model=model or settings.chat_model,
-        api_key=SecretStr(settings.chat_api_key or "local"),
-        base_url=settings.chat_base_url,
-        temperature=0.7,
-        # Emit token usage on the final streamed chunk so run_turn can record
-        # prompt/completion token metrics (off by default when streaming).
-        stream_usage=True,
-    )
+    return providers.build_chat_model(tier, tools=tools, temperature=0.7, stream_usage=True)
 
 
 def _use_reasoning_tier(intent: dict | None) -> bool:
@@ -100,8 +90,8 @@ def get_graph():
 def _build():
     lc_tools = tools.langchain_tools()
     # Two tiers, bound once. Routing picks per turn from the classified intent.
-    fast_model = build_model(settings.chat_fast_model).bind_tools(lc_tools)
-    reasoning_model = build_model(settings.chat_model).bind_tools(lc_tools)
+    fast_model = build_model("fast", tools=lc_tools)
+    reasoning_model = build_model("reasoning", tools=lc_tools)
 
     async def classify_node(state: State) -> dict:
         # Tag the turn with a structured intent (best-effort; never raises).

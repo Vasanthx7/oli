@@ -26,3 +26,8 @@ terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 terraform/terraform.tfvars
 terraform/*.tfplan
+
+# Browse eval harness outputs (large screenshots/traces — keep local, not in git).
+# Harness source (scenarios, runner) is tracked; its results/caches are not.
+evals/**/results/
+evals/**/__pycache__/

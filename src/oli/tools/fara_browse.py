@@ -586,13 +586,15 @@ async def _run(goal: str, profile: str | None, start_url: str | None = None) -> 
 
 def _unavailable_message() -> str:
     msg = (
-        "The browsing agent is offline right now — the Fara model host isn't "
-        "reachable. It runs on a local machine (reached over Tailscale in "
-        "production), which may be asleep or disconnected."
+        "The live browsing agent is offline right now — the local Fara vision model "
+        "host isn't reachable. Computer-use runs only on that local, open-source model "
+        "(reached over Tailscale in production), which may be asleep or disconnected."
     )
     url = config.settings.fara_unavailable_url
     if url:
-        msg += f" You can watch a recorded walkthrough of this workflow here: {url}"
+        # Markdown link so the UI renders it as a clickable "watch the demo" affordance —
+        # e.g. for a recruiter checking how the browsing workflow looks (see ADR 0017).
+        msg += f" ▶ [Watch a recorded walkthrough of this workflow]({url})"
     return msg
 
 
