@@ -136,6 +136,18 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    # --- Access control (HTTP Basic Auth over the whole app) ---
+    # The app faces the public internet (ADR 0012) but is single-user (ADR 0008), so
+    # every endpoint sits behind Basic Auth. Auth is ENABLED only when a password is
+    # set — leaving it empty keeps local dev, tests, and CI open (and offline). Set a
+    # strong AUTH_PASSWORD in any internet-facing deploy (startup warns if you don't).
+    auth_username: str = "oli"
+    auth_password: str = ""
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.auth_password)
+
     # --- Storage ---
     # SQLite for local dev/test/CI; set to a postgresql+asyncpg:// URL in production.
     database_url: str = ""

@@ -39,6 +39,7 @@ from openai import AsyncOpenAI
 
 from .. import config, live_browser, profiles
 from ..logging_config import get_logger
+from ..net_guard import UnsafeURLError, validate_url
 
 log = get_logger(__name__)
 
@@ -328,7 +329,12 @@ async def _dispatch(page: Any, action: str, args: dict[str, Any]) -> tuple[bool,
         return False, "scrolled horizontally"
     if action == "visit_url":
         url = str(args.get("url", ""))
-        target = url if "://" in url else "https://" + url
+        # Guard the agent-chosen URL: http(s) to a public host only — never file://
+        # or an internal/metadata address. Feed refusals back so the loop continues.
+        try:
+            target = await asyncio.to_thread(validate_url, url)
+        except UnsafeURLError as e:
+            return False, f"refused to visit unsafe url {url!r}: {e}"
         with contextlib.suppress(Exception):
             await page.goto(target, wait_until="domcontentloaded", timeout=30000)
         return False, f"navigated to {url}"

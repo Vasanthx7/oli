@@ -35,9 +35,11 @@ from pydantic import BaseModel, field_validator  # noqa: E402
 
 from . import config, live_browser, memory, metrics, profiles  # noqa: E402
 from .agent import run_turn  # noqa: E402
+from .auth import BasicAuthMiddleware  # noqa: E402
 from .db import dispose_engine, init_models  # noqa: E402
 from .logging_config import configure_logging, get_logger  # noqa: E402
 from .memory import MemoryStore  # noqa: E402
+from .net_guard import UnsafeURLError, validate_url  # noqa: E402
 from .profiles import ProfileManager  # noqa: E402
 from .scheduler import Scheduler, initial_next_run  # noqa: E402
 from .storage import Storage  # noqa: E402
@@ -67,7 +69,18 @@ async def lifespan(_app: FastAPI):
     # On SQLite (dev/test) create tables directly; production uses Alembic migrations.
     if not config.settings.is_postgres:
         await init_models()
-    log.info("startup", environment=config.settings.environment, model=config.settings.groq_model)
+    log.info(
+        "startup",
+        environment=config.settings.environment,
+        model=config.settings.groq_model,
+        auth_enabled=config.settings.auth_enabled,
+    )
+    if config.settings.environment == "production" and not config.settings.auth_enabled:
+        log.warning(
+            "auth_disabled_in_production",
+            detail="AUTH_PASSWORD is not set — every endpoint is publicly reachable. "
+            "Set a strong AUTH_PASSWORD before exposing this app to the internet.",
+        )
     scheduler.start()
     try:
         yield
@@ -80,6 +93,16 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Oli", lifespan=lifespan)
+
+# Gate the entire app (HTTP + WebSocket) behind Basic Auth when a password is set.
+# Added last so it wraps outermost — unauthorized requests are rejected before they
+# reach any other middleware or route. No-op when AUTH_PASSWORD is empty (dev/test).
+if config.settings.auth_enabled:
+    app.add_middleware(
+        BasicAuthMiddleware,
+        username=config.settings.auth_username,
+        password=config.settings.auth_password,
+    )
 
 # Cap request bodies (audio uploads are the largest legitimate payload).
 MAX_REQUEST_BYTES = 25 * 1024 * 1024
@@ -436,7 +459,12 @@ async def live_release():
 
 @app.post("/api/live/navigate")
 async def live_navigate(req: LiveNavigateRequest):
-    await live_browser.session().navigate(req.url)
+    # Only http(s) to a public host — never file:// or an internal/metadata address.
+    try:
+        target = await asyncio.to_thread(validate_url, req.url)
+    except UnsafeURLError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await live_browser.session().navigate(target)
     return live_browser.session().status()
 
 
