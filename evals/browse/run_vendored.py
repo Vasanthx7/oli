@@ -108,9 +108,10 @@ async def _run_one(scn: Scenario, attempt: int, model: str, max_steps: int) -> R
         sampler.__enter__()
     try:
         # Call the loop directly (not browse_fara) so we categorize errors ourselves,
-        # exactly like run_fara catches into run_error. Pass the scenario's profile so
-        # authenticated E2E flows run under the saved logged-in context.
-        final = (await fb._run(scn.goal, scn.profile, None)) or ""
+        # exactly like run_fara catches into run_error. Pass the scenario's profile AND its
+        # start_url so authenticated E2E flows begin on the saved logged-in context and the
+        # right site/TLD (else the model wanders to e.g. amazon.com where cookies don't apply).
+        final = (await fb._run(scn.goal, scn.profile, scn.start_url)) or ""
         final = final.strip()
         is_done = bool(final) and not final.startswith(_STEP_LIMIT_PREFIX)
     except fb._Unavailable as e:  # model host unreachable
@@ -167,7 +168,10 @@ async def _main_async(args: argparse.Namespace) -> int:
     settings.fara_autoroute = bool(args.autoroute)
     if args.base_url:
         settings.fara_base_url = args.base_url
-    settings.fara_save_traces = False
+    settings.fara_save_traces = bool(args.save_traces)
+    # Eval default 0 = no soft deadline, so we capture the run's true total time (the
+    # production app applies its own external tool timeout; here we want full timing).
+    settings.fara_deadline_seconds = int(args.deadline)
 
     from oli.tools import fara_browse as fb
 
@@ -255,6 +259,18 @@ def main() -> int:
         "--allow-manual",
         action="store_true",
         help="permit side-effecting/auth (manual=True) scenarios — run watched, authorized.",
+    )
+    p.add_argument(
+        "--save-traces",
+        action="store_true",
+        help="persist per-step screenshots + steps.jsonl + summary.json under data/fara_traces/.",
+    )
+    p.add_argument(
+        "--deadline",
+        type=int,
+        default=0,
+        help="soft wall-clock budget (s) per run; 0 (default) = disabled, so the eval "
+        "measures TRUE total time without the loop stopping itself early.",
     )
     args = p.parse_args()
 

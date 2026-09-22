@@ -16,6 +16,7 @@ messages for the UI/history, and extracting durable memories after the turn.
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import AsyncGenerator
 
@@ -127,6 +128,53 @@ def _text(content) -> str:
     return str(content)
 
 
+# The cloud models like to sprinkle fancy typography and emoji into replies (curly
+# quotes, non-breaking hyphens, ≈, ▶, 🔐, ✓). These render as odd glyphs or boxes in
+# the terminal / plain UI, so we normalize them to ASCII (map) or drop them (strip).
+# Currency (₹ $ €), accents, and em dashes (—) are deliberately left alone.
+_CHAR_MAP = {
+    "‘": "'",
+    "’": "'",
+    "‚": "'",
+    "‛": "'",  # single quotes
+    "“": '"',
+    "”": '"',
+    "„": '"',
+    "‟": '"',  # double quotes
+    "‐": "-",
+    "‑": "-",
+    "‒": "-",
+    "–": "-",
+    "―": "-",  # hyphens/en dash
+    "…": "...",  # ellipsis
+    "≈": "~",
+    "≅": "~",
+    "≃": "~",  # approximately-equal signs
+    " ": " ",
+    " ": " ",
+    " ": " ",
+    " ": " ",  # nb / thin spaces
+    "​": "",
+    "‌": "",
+    "‍": "",
+    "﻿": "",  # zero-width joiners/marks
+}
+_CHAR_TRANS = str.maketrans(_CHAR_MAP)
+
+# Decorative symbol / emoji blocks: arrows, geometric shapes (▶), dingbats (✓), misc
+# symbols, and the emoji planes. Currency, accents, and em dashes sit outside these.
+_DECOR_RE = re.compile("[←-⇿⌀-⏿■-◿☀-➿⬀-⯿︀-️\U0001f000-\U0001faff]")
+
+
+def _normalize_text(text: str) -> str:
+    """Strip decorative unicode the cloud models emit (curly quotes, non-breaking
+    hyphens, emoji, arrows) so replies render as clean plain text everywhere.
+
+    Safe to apply per streamed chunk: every mapping/removal is on a single codepoint,
+    which a chunk boundary never splits (Python strings are codepoints, not bytes)."""
+    return _DECOR_RE.sub("", text.translate(_CHAR_TRANS))
+
+
 async def _resume_browse_turn(
     store: Storage, conversation_id: str, reply: str
 ) -> AsyncGenerator[dict, None]:
@@ -147,6 +195,7 @@ async def _resume_browse_turn(
             await fara_browse.discard_paused_browse()
         yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
         return
+    result = _normalize_text(result)
     await store.add_message(conversation_id, "tool", result, tool_name="browse")
     yield {"type": "tool_end", "name": "browse", "result": result[:_TOOL_PREVIEW_LEN]}
     await store.add_message(conversation_id, "assistant", result)
@@ -215,7 +264,7 @@ async def run_turn(
                 elif kind == "on_chat_model_stream":
                     # Only the agent's tokens go to the UI — never the classifier's.
                     if from_agent:
-                        text = _text(event["data"]["chunk"].content)
+                        text = _normalize_text(_text(event["data"]["chunk"].content))
                         if text:
                             yield {"type": "token", "text": text}
 
@@ -237,7 +286,7 @@ async def run_turn(
                     msg = event["data"]["output"]
                     # The agent message with no tool calls is the final answer.
                     if from_agent and not getattr(msg, "tool_calls", None):
-                        final_content = _text(msg.content)
+                        final_content = _normalize_text(_text(msg.content))
                     if token_budget and tokens_used >= token_budget:
                         stop_reason = "token_budget"
 

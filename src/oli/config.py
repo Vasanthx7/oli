@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     fara_base_url: str = "http://localhost:11434/v1"
     fara_api_key: str = "ollama"  # Ollama ignores it; the OpenAI client requires one.
     fara_model: str = "fara15-4b"
+    # Browser channel for profile/browse contexts. A real installed Chrome ("chrome",
+    # "msedge") sends a genuine fingerprint/UA, which bot-sensitive sites (Amazon) need to
+    # keep a saved login valid HEADLESS. Empty = Playwright's bundled Chromium (+ stealth
+    # UA/args fallback). Falls back automatically if the channel isn't installed.
+    fara_browser_channel: str = "chrome"
     # "Careful" tier for interaction-heavy / dense-page tasks (add-to-cart, forms,
     # commerce): 4B grounds well on clean read/nav pages but lands near — not on —
     # small controls on cluttered pages, where 9B is reliable (benchmark + Amazon
@@ -117,6 +122,12 @@ class Settings(BaseSettings):
     # Debug aid: save per-step screenshots + a steps.jsonl under data/fara_traces/.
     # Off by default (extra disk/latency); flip on to inspect grounding failures.
     fara_save_traces: bool = False
+    # Soft wall-clock budget (seconds) for one browse run; 0 = disabled. The loop ends
+    # itself with a graceful partial answer + a recorded summary when this is reached,
+    # instead of being hard-cancelled. Sized for real multi-step commerce flows (search +
+    # add-to-cart + cart cleanup can take ~40 steps at ~5-6s each ~= 200-250s). Kept below
+    # browse_timeout_seconds so the graceful stop fires before the hard backstop. Evals set 0.
+    fara_deadline_seconds: int = 300
 
     # Speech-to-text (Groq Whisper). turbo is fast + cheap; large-v3 is most accurate.
     stt_model: str = "whisper-large-v3-turbo"
@@ -127,10 +138,15 @@ class Settings(BaseSettings):
     # Per-turn ceiling on total LLM tokens (prompt+completion); 0 = disabled. Ends the
     # turn gracefully once exceeded, so a pathological loop can't burn unbounded tokens.
     per_turn_token_budget: int = 0
-    # Hard timeout on a single tool call in seconds; 0 = disabled. Generous by default
-    # so browse (bounded internally by MAX_STEPS) isn't cut short, while still capping
-    # a truly hung tool.
+    # Hard timeout on a single tool call in seconds; 0 = disabled. Applies to the quick
+    # tools (web_search/web_fetch/memory). Browse has its own, larger cap below.
     tool_timeout_seconds: int = 180
+    # Separate hard backstop for `browse`, which legitimately runs for minutes (multi-step
+    # commerce flows). It is already bounded gracefully by MAX_STEPS + fara_deadline_seconds,
+    # so this only catches a truly hung run (e.g. a stalled model/network call inside a
+    # step, which the between-steps soft-deadline can't interrupt). Keep it ABOVE
+    # fara_deadline_seconds so the graceful stop wins in the normal case. 0 = disabled.
+    browse_timeout_seconds: int = 360
 
     # --- Server ---
     host: str = "127.0.0.1"
