@@ -39,6 +39,7 @@ from openai import AsyncOpenAI
 
 from .. import config, live_browser, profiles
 from ..logging_config import get_logger
+from ..net_guard import UnsafeURLError, validate_url
 
 log = get_logger(__name__)
 
@@ -93,6 +94,27 @@ _SAFETY_SUFFIX = (
     "\n\nSafety: NEVER place an order or complete a payment. Do not click 'Place order', "
     "'Buy now', 'Pay', 'Proceed to pay', or otherwise confirm a purchase. If the task "
     "would require that, stop just before it and report what remains for the user to do."
+)
+# Anti-hallucination: don't claim a state-changing action worked without checking the
+# real state. A product tile flipping to "in cart" is not proof — especially when signed
+# out, where the add doesn't persist. Force a verification pass before reporting success.
+_VERIFY_SUFFIX = (
+    "\n\nVerify before finishing: if the task was to add something to a cart/bag/list, OPEN "
+    "the cart/bag page and confirm the item AND the cart count/subtotal are actually there "
+    "before you report success. A product tile showing 'in cart' is NOT proof. If the cart "
+    "does not show the item (for example because you are signed out), say it could not be "
+    "added and why — do NOT claim it was added."
+)
+# Unavailable / can't-add handling: don't dead-end at an out-of-stock listing, and never
+# silently substitute a different product. Gather the available options, then ASK.
+_ALTERNATIVES_SUFFIX = (
+    "\n\nIf the exact product to add is unavailable or has no 'Add to cart' button "
+    "('Currently unavailable', out of stock, or only 'Add to Wish List'), do NOT stop at "
+    "that page and do NOT add anything else on your own. First look for available "
+    "equivalents: 'See all buying options'/other sellers, other variants (color, storage), "
+    "or search the same model again. Then ask the user which available option to add, "
+    "listing each option's name, price, and seller. Add an item only after they choose. If "
+    "nothing equivalent is available, say the item is currently unavailable and stop."
 )
 
 _SYSTEM_PROMPT = (Path(__file__).parent / "fara_system_prompt.txt").read_text(encoding="utf-8")
@@ -328,7 +350,12 @@ async def _dispatch(page: Any, action: str, args: dict[str, Any]) -> tuple[bool,
         return False, "scrolled horizontally"
     if action == "visit_url":
         url = str(args.get("url", ""))
-        target = url if "://" in url else "https://" + url
+        # Guard the agent-chosen URL: http(s) to a public host only — never file://
+        # or an internal/metadata address. Feed refusals back so the loop continues.
+        try:
+            target = await asyncio.to_thread(validate_url, url)
+        except UnsafeURLError as e:
+            return False, f"refused to visit unsafe url {url!r}: {e}"
         with contextlib.suppress(Exception):
             await page.goto(target, wait_until="domcontentloaded", timeout=30000)
         return False, f"navigated to {url}"
@@ -388,6 +415,30 @@ async def _read_page_answer(client: AsyncOpenAI, page: Any, question: str, model
     return "(could not read page)"
 
 
+async def _signed_in(st: _RunState) -> bool:
+    """Best-effort check that a profile run landed AUTHENTICATED, not on a login wall.
+
+    ``has_cookies`` (a Cookies file exists) can't tell an expired session from a live one,
+    so a profile marked "logged in" may still land signed out (the Amazon case: cookies
+    from a login 11 days ago). We reuse the text-read util to ask the model whether the
+    page shows a signed-in account or a sign-in prompt. Defaults to True on any ambiguity
+    or read failure, so a flaky check never blocks a genuinely authenticated run."""
+    url = ""
+    with contextlib.suppress(Exception):
+        url = st.page.url or ""
+    if not url.startswith("http"):
+        return True  # nothing navigated yet — don't false-positive on about:blank
+    question = (
+        "Look at this page's account/header area. Is a signed-in user account shown, or is "
+        "it prompting to sign in / log in? Answer with exactly one word: SIGNED_IN or "
+        "SIGNED_OUT."
+    )
+    ans = ""
+    with contextlib.suppress(Exception):
+        ans = await _read_page_answer(st.client, st.page, question, st.model_tag)
+    return "SIGNED_OUT" not in ans.upper()
+
+
 async def _launch(profile: str | None) -> tuple[Any, Any, Any]:
     """Launch a headless Chromium at Fara's viewport. Returns (pw, browser, page).
 
@@ -400,15 +451,24 @@ async def _launch(profile: str | None) -> tuple[Any, Any, Any]:
     if profile:
         pdir = profiles.profile_dir(profile)
         pdir.mkdir(parents=True, exist_ok=True)
-        context = await pw.chromium.launch_persistent_context(
-            str(pdir),
-            headless=True,
-            viewport=VIEWPORT,  # type: ignore[arg-type]  # plain dict vs ViewportSize TypedDict
-        )
+        # Shared anti-bot launcher: a saved login only stays valid headless on sites like
+        # Amazon if the context looks like a real browser (see profiles.launch_persistent).
+        context = await profiles.launch_persistent(pw, pdir, headless=True, viewport=VIEWPORT)
         page = context.pages[0] if context.pages else await context.new_page()
         return pw, context, page  # persistent context is its own "browser"
-    browser = await pw.chromium.launch(headless=True)
-    context = await browser.new_context(viewport=VIEWPORT)  # type: ignore[arg-type]
+    # Public (no-profile) browse: same stealth so bot-sensitive sites don't serve a
+    # degraded/blocked view.
+    browser = await pw.chromium.launch(
+        headless=True,
+        args=profiles.STEALTH_ARGS,
+        ignore_default_args=["--enable-automation"],
+    )
+    context = await browser.new_context(
+        viewport=VIEWPORT,  # type: ignore[arg-type]  # plain dict vs ViewportSize TypedDict
+        user_agent=profiles.FALLBACK_UA,
+        locale="en-IN",
+        timezone_id="Asia/Kolkata",
+    )
     page = await context.new_page()
     return pw, browser, page
 
@@ -442,10 +502,17 @@ class _RunState:
     last_click_bucket: tuple | None = None
     pending_obs: str = ""
     last_thoughts: str = ""
+    # --- TEMP local diagnostic instrumentation (Case-1 timeout; remove after fix) ---
+    # Wall-clock start of the run (perf_counter), so per-step trace can report cumulative
+    # elapsed and the soft-deadline can end the run before the external tool cap fires.
+    started_at: float = 0.0
+    step_ms_log: list[int] = field(default_factory=list)
+    llm_ms_log: list[int] = field(default_factory=list)
 
 
 async def _new_state(goal: str, profile: str | None, start_url: str | None) -> _RunState:
     """Launch the browser, attach the live view, seed the conversation with the goal."""
+    run_start = time.perf_counter()  # TEMP: aligns elapsed with the external tool budget
     client = AsyncOpenAI(
         base_url=config.settings.fara_base_url, api_key=config.settings.fara_api_key
     )
@@ -472,7 +539,14 @@ async def _new_state(goal: str, profile: str | None, start_url: str | None) -> _
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": _b64_data_uri(first_shot)}},
-                {"type": "text", "text": goal + _TASK_HINT + _SAFETY_SUFFIX},
+                {
+                    "type": "text",
+                    "text": goal
+                    + _TASK_HINT
+                    + _SAFETY_SUFFIX
+                    + _VERIFY_SUFFIX
+                    + _ALTERNATIVES_SUFFIX,
+                },
             ],
         },
     ]
@@ -499,6 +573,7 @@ async def _new_state(goal: str, profile: str | None, start_url: str | None) -> _
         goal=goal,
         profile=profile,
         start_url=start_url,
+        started_at=run_start,
     )
 
 
@@ -521,17 +596,69 @@ async def _append_user_reply(st: _RunState, reply: str) -> None:
     _trim_images(st.messages, MAX_IMAGES)
 
 
+def _write_summary(st: _RunState, outcome: str, final: str) -> None:
+    """TEMP local diagnostic: write summary.json for one run's outcome + timing rollup.
+
+    Called at every terminal path (done/paused/step_limit/deadline/error) so a run always
+    leaves a record — unlike today's external hard-cancel, which leaves no trace tail."""
+    if st.trace_dir is None:
+        return
+    elapsed = round(time.perf_counter() - st.started_at, 1) if st.started_at else None
+    steps, llms = st.step_ms_log, st.llm_ms_log
+    summary = {
+        "outcome": outcome,
+        "goal": st.goal,
+        "profile": st.profile,
+        "model_tag": st.model_tag,
+        "n_steps": st.step,
+        "total_elapsed_s": elapsed,
+        "avg_step_ms": round(sum(steps) / len(steps)) if steps else None,
+        "max_step_ms": max(steps) if steps else None,
+        "avg_llm_ms": round(sum(llms) / len(llms)) if llms else None,
+        "slowest_step": (steps.index(max(steps)) + 1) if steps else None,
+        "final": final[:500],
+    }
+    with contextlib.suppress(Exception):
+        (st.trace_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
 async def _drive(st: _RunState) -> tuple[str, str]:
     """Run the observe-think-act loop from ``st.step``.
 
     Returns ``("paused", question)`` when the model asks the user something (browser
     left open), or ``("done", answer)`` on terminate / step-limit. Raises _Unavailable
     if the model host drops. Never closes the browser — the caller (_pump/_run) does."""
+    # Authenticated run, fresh start: verify we actually landed signed in. A stale profile
+    # (expired cookies) lands on a login wall; proceeding there makes the model act
+    # logged-out and hallucinate success (e.g. "added to cart" with an empty cart). Instead,
+    # stop and hand the user back to re-login. Skipped on resume (step > 0).
+    if st.profile and st.step == 0 and not await _signed_in(st):
+        msg = profiles.relogin_message(st.profile)
+        log.warning("fara_signed_out", profile=st.profile)
+        _write_summary(st, "login_needed", msg)
+        return "done", msg
+
     while st.step < MAX_STEPS:
+        # TEMP soft-deadline: end gracefully with a recorded summary + partial answer
+        # BEFORE the external tool timeout hard-cancels us (leaving no trace).
+        budget = config.settings.fara_deadline_seconds
+        if budget and st.started_at:
+            elapsed_now = round(time.perf_counter() - st.started_at, 1)
+            if elapsed_now >= budget:
+                payload = (
+                    f"I ran out of time after {elapsed_now}s at step {st.step}. "
+                    f"Last thing I saw: {st.last_thoughts[:300]}"
+                )
+                log.warning("fara_deadline", elapsed_s=elapsed_now, step=st.step)
+                _write_summary(st, "deadline", payload)
+                return "done", payload
+
         st.step += 1
         step = st.step
+        step_start = time.perf_counter()
         await st.agent.wait_if_paused()  # block here while the user has take-control
 
+        t_llm = time.perf_counter()
         try:
             resp = await st.client.chat.completions.create(
                 model=st.model_tag,
@@ -541,6 +668,7 @@ async def _drive(st: _RunState) -> tuple[str, str]:
             )
         except Exception as e:  # noqa: BLE001
             raise _Unavailable(str(e)) from e
+        llm_ms = round((time.perf_counter() - t_llm) * 1000)
 
         text = resp.choices[0].message.content or ""
         st.messages.append({"role": "assistant", "content": text})
@@ -569,9 +697,13 @@ async def _drive(st: _RunState) -> tuple[str, str]:
             detail=(str(detail)[:80] if detail else None),
             stalled=stalled,
             same_click=same_click,
+            llm_ms=llm_ms,  # TEMP: model latency + cumulative elapsed for timeout diagnosis
+            elapsed_s=(round(time.perf_counter() - st.started_at, 1) if st.started_at else 0.0),
             thought=(thoughts or text.strip().splitlines()[0] if text.strip() else "")[:140],
         )
 
+        st.llm_ms_log.append(llm_ms)  # TEMP: every model call, incl. terminal steps
+        t_act = time.perf_counter()
         is_terminal, obs = await _dispatch(st.page, action, args)
         if isinstance(obs, str) and obs.startswith("__READ__:"):
             answer = await _read_page_answer(
@@ -579,14 +711,21 @@ async def _drive(st: _RunState) -> tuple[str, str]:
             )
             st.pending_obs = f"Read the page: {answer}"
             is_terminal, obs = False, st.pending_obs
+        act_ms = round((time.perf_counter() - t_act) * 1000)
         if is_terminal:
             if isinstance(obs, str) and obs.startswith("__ASK__:"):
-                question = obs[len("__ASK__:") :].strip() or thoughts
-                return "paused", (question or "I need a bit more information to continue.")
-            return "done", (obs or thoughts or "(done)")
+                question = (obs[len("__ASK__:") :].strip() or thoughts) or (
+                    "I need a bit more information to continue."
+                )
+                _write_summary(st, "paused", question)
+                return "paused", question
+            answer = obs or thoughts or "(done)"
+            _write_summary(st, "done", answer)
+            return "done", answer
 
         # Break a dead-click loop by physically changing the view so the next screenshot
         # differs and the model re-grounds instead of re-clicking.
+        t_shot = time.perf_counter()
         if same_click:
             with contextlib.suppress(Exception):
                 await st.page.mouse.wheel(0, 500)
@@ -598,6 +737,10 @@ async def _drive(st: _RunState) -> tuple[str, str]:
         url = ""
         with contextlib.suppress(Exception):
             url = st.page.url
+        shot_ms = round((time.perf_counter() - t_shot) * 1000)
+        step_ms = round((time.perf_counter() - step_start) * 1000)
+        elapsed_s = round(time.perf_counter() - st.started_at, 1) if st.started_at else 0.0
+        st.step_ms_log.append(step_ms)
         prefix = f"Current URL: {url}\n" if url else ""
         if same_click:
             stuck = (
@@ -627,6 +770,13 @@ async def _drive(st: _RunState) -> tuple[str, str]:
                                 "stalled": stalled,
                                 "same_click": same_click,
                                 "url": url,
+                                # TEMP timing breakdown for the Case-1 timeout diagnosis
+                                "llm_ms": llm_ms,
+                                "act_ms": act_ms,
+                                "shot_ms": shot_ms,
+                                "step_ms": step_ms,
+                                "elapsed_s": elapsed_s,
+                                "thought": (thoughts or "")[:500],
                             }
                         )
                         + "\n"
@@ -642,10 +792,12 @@ async def _drive(st: _RunState) -> tuple[str, str]:
         )
         _trim_images(st.messages, MAX_IMAGES)
 
-    return "done", (
+    payload = (
         "I couldn't finish within the step limit. Here's the last thing I saw: "
         f"{st.last_thoughts[:300]}"
     )
+    _write_summary(st, "step_limit", payload)
+    return "done", payload
 
 
 async def _close(st: _RunState) -> None:
@@ -684,7 +836,7 @@ def _unavailable_message() -> str:
     if url:
         # Markdown link so the UI renders it as a clickable "watch the demo" affordance —
         # e.g. for a recruiter checking how the browsing workflow looks (see ADR 0017).
-        msg += f" ▶ [Watch a recorded walkthrough of this workflow]({url})"
+        msg += f" [Watch a recorded walkthrough of this workflow]({url})"
     return msg
 
 
@@ -726,11 +878,13 @@ async def _pump(st: _RunState) -> str:
         kind, payload = await _drive(st)
     except _Unavailable as e:
         log.warning("fara_unavailable", error=str(e))
+        _write_summary(st, "error", f"unavailable: {e}")  # TEMP diagnostic
         await _close(st)
         _clear_handover()
         return _unavailable_message()
     except Exception as e:  # noqa: BLE001
         log.warning("fara_browse_failed", error=str(e))
+        _write_summary(st, "error", f"{type(e).__name__}: {e}")  # TEMP diagnostic
         await _close(st)
         _clear_handover()
         return f"browse failed: {e}"

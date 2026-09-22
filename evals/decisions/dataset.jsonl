@@ -1,0 +1,26 @@
+{"query": "what's the capital of France?", "category": "chat", "complexity": "simple", "needs_tools": false}
+{"query": "tell me a short joke", "category": "chat", "complexity": "simple", "needs_tools": false}
+{"query": "how are you doing today?", "category": "chat", "complexity": "simple", "needs_tools": false}
+{"query": "what is 17 times 23?", "category": "chat", "complexity": "simple", "needs_tools": false}
+{"query": "explain quantum entanglement in simple terms", "category": "chat", "complexity": "hard", "needs_tools": false}
+{"query": "compare the pros and cons of REST vs GraphQL for a mobile app", "category": "chat", "complexity": "hard", "needs_tools": false}
+{"query": "help me plan a 3-day vegetarian itinerary for Kyoto", "category": "chat", "complexity": "hard", "needs_tools": false}
+{"query": "write a haiku about the monsoon", "category": "chat", "complexity": "simple", "needs_tools": false}
+{"query": "what's the weather in Bangalore right now?", "category": "tools", "complexity": "simple", "needs_tools": true}
+{"query": "what's the current price of Bitcoin?", "category": "tools", "complexity": "simple", "needs_tools": true}
+{"query": "who won the cricket match yesterday?", "category": "tools", "complexity": "simple", "needs_tools": true}
+{"query": "what's the latest news about the RBI repo rate?", "category": "tools", "complexity": "simple", "needs_tools": true}
+{"query": "summarize the top 3 stories on Hacker News right now", "category": "tools", "complexity": "hard", "needs_tools": true}
+{"query": "research the best noise-cancelling headphones under 20000 and compare three", "category": "tools", "complexity": "hard", "needs_tools": true}
+{"query": "find recent reviews of the latest MacBook Air and summarize the consensus", "category": "tools", "complexity": "hard", "needs_tools": true}
+{"query": "check my Amazon cart and tell me the subtotal", "category": "browse", "complexity": "simple", "needs_tools": true}
+{"query": "what's currently in my Amazon cart?", "category": "browse", "complexity": "simple", "needs_tools": true}
+{"query": "add the cheapest USB-C cable to my Amazon cart but stop before ordering", "category": "browse", "complexity": "hard", "needs_tools": true}
+{"query": "reorder my last order on Zomato but stop before payment", "category": "browse", "complexity": "hard", "needs_tools": true}
+{"query": "book me a yoga class tomorrow morning on cult.fit, confirm before booking", "category": "browse", "complexity": "hard", "needs_tools": true}
+{"query": "on Amazon find the protein bars I bought before and add a pack to my cart", "category": "browse", "complexity": "hard", "needs_tools": true}
+{"query": "remember that my birthday is January 5th", "category": "memory", "complexity": "simple", "needs_tools": true}
+{"query": "remember I prefer window seats when flying", "category": "memory", "complexity": "simple", "needs_tools": true}
+{"query": "what did I tell you about my sister's name?", "category": "memory", "complexity": "simple", "needs_tools": true}
+{"query": "recall what I said about my job title", "category": "memory", "complexity": "simple", "needs_tools": true}
+{"query": "save that I'm allergic to peanuts and remind me whenever food comes up", "category": "memory", "complexity": "hard", "needs_tools": true}

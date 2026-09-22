@@ -54,6 +54,18 @@ variable "postgres_password" {
   sensitive   = true
 }
 
+variable "auth_username" {
+  description = "HTTP Basic Auth username for the public app."
+  type        = string
+  default     = "oli"
+}
+
+variable "auth_password" {
+  description = "HTTP Basic Auth password gating the whole app. REQUIRED for the internet-facing deploy — leave empty and every endpoint is public."
+  type        = string
+  sensitive   = true
+}
+
 variable "ghcr_username" {
   description = "GitHub username used to pull the (private) oli image from GHCR."
   type        = string

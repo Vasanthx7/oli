@@ -76,6 +76,48 @@ def build_profile(name: str | None, *, headless: bool) -> Any | None:
     return BrowserProfile(user_data_dir=str(d), headless=headless, keep_alive=False)
 
 
+# --- Anti-bot launch --------------------------------------------------------
+# Bot-sensitive sites (Amazon) force a signed-out/bot view for obviously-automated
+# browsers, so a saved login lands logged-out headless. We strip the automation signals
+# and (by default) drive a real installed Chrome, so the saved session is actually honored.
+# One launcher for EVERY profile context (browse + inline login), so the login is minted
+# and reused by the same kind of context. See the signed-out findings in evals/browse.
+STEALTH_ARGS = ["--disable-blink-features=AutomationControlled"]
+# Realistic desktop UA for the bundled-Chromium fallback so it doesn't advertise
+# "HeadlessChrome" (a hard signed-out trigger). Real Chrome via `channel` sends its own.
+FALLBACK_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+
+
+async def launch_persistent(pw: Any, user_data_dir: Any, *, headless: bool, viewport: dict) -> Any:
+    """Launch a persistent context a bot-sensitive site will accept as a real browser.
+
+    Tries the configured Chrome channel first (genuine fingerprint/UA — the reliable way to
+    keep a saved login valid headless); falls back to bundled Chromium with a realistic UA
+    when that channel isn't installed. Both strip the automation flags (``navigator.webdriver``)."""
+    common: dict[str, Any] = {
+        "headless": headless,
+        "viewport": viewport,
+        "args": STEALTH_ARGS,
+        "ignore_default_args": ["--enable-automation"],
+        "locale": "en-IN",  # single-user app targeting .in sites
+        "timezone_id": "Asia/Kolkata",
+    }
+    channel = config.settings.fara_browser_channel
+    if channel:
+        try:
+            return await pw.chromium.launch_persistent_context(
+                str(user_data_dir), channel=channel, **common
+            )
+        except Exception as e:  # noqa: BLE001 — channel not installed on this box, etc.
+            log.warning("browser_channel_unavailable", channel=channel, error=str(e))
+    return await pw.chromium.launch_persistent_context(
+        str(user_data_dir), user_agent=FALLBACK_UA, **common
+    )
+
+
 # Signals that a goal targets an *authenticated* site (needs a logged-in profile),
 # so if we can't match one we should ask the user to log in rather than fail.
 _ACCOUNT_TERMS = (
@@ -141,6 +183,10 @@ async def resolve_for_goal(goal: str) -> dict:
         if any(re.search(rf"\b{re.escape(k)}\b", g) for k in keys):
             # #1: matched a saved profile for this site — prefer it even for plain
             # reads (logged-in pages are cleaner/consistent), not just account actions.
+            # NB: ``logged_in`` is best-effort (``has_cookies`` = a Cookies file exists),
+            # so it can be stale — the session may have expired since the last login. The
+            # authoritative gate is the runtime signed-in check in fara_browse, which
+            # detects a login wall after landing and hands the user back to re-login.
             action = "use" if r.get("logged_in") else "login"
             return {
                 "action": action,
@@ -156,6 +202,20 @@ async def resolve_for_goal(goal: str) -> dict:
 
     # 3. Otherwise no profile is needed — browse normally.
     return {"action": "none"}
+
+
+def relogin_message(label: str | None) -> str:
+    """User-facing message when a saved profile exists but its session is signed out.
+
+    Shared by the pre-flight login offer (``browse._offer_login``) and the runtime
+    signed-out detection (``fara_browse``), so both speak with one voice: don't guess,
+    don't act logged-out — re-login via the Profiles panel and ask again."""
+    who = f"**{label}**" if label else "the site"
+    return (
+        f"You're signed out of {who} — the saved login looks expired. Open the Profiles "
+        "panel and sign in again, then ask me the same thing. I won't act while logged "
+        "out or guess what your account shows. (Your password never reaches me.)"
+    )
 
 
 class ProfileManager:

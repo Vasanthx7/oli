@@ -16,5 +16,10 @@ home_ollama_tailscale_ip = "100.x.y.z"            # `tailscale ip -4` on the hom
 groq_api_key       = "gsk_..."
 postgres_password  = "generate-a-real-random-password"
 
+# HTTP Basic Auth gating the public app. REQUIRED — without a password every
+# endpoint (and the live-browser WebSocket) is reachable by anyone on the internet.
+auth_username = "oli"
+auth_password = "generate-a-long-random-password"
+
 ghcr_username = "vasanthx7"
 ghcr_pat      = "ghp_..." # classic PAT, read:packages scope only
