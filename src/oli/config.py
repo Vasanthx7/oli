@@ -129,6 +129,20 @@ class Settings(BaseSettings):
     # browse_timeout_seconds so the graceful stop fires before the hard backstop. Evals set 0.
     fara_deadline_seconds: int = 300
 
+    # --- Jev (TypeSafe System-One) decision model ---
+    # A typed-decision model (not an LLM) for structured decision points (intent
+    # classification first). Off by default; failover to the current LLM path is always
+    # kept. See src/oli/jev.py and evals/decisions/.
+    jev_api_key: str = ""
+    jev_model: str = "jev-latest"
+    # use_jev: route enabled decision points THROUGH Jev (with LLM failover).
+    use_jev: bool = False
+    # jev_shadow: run Jev ALONGSIDE the current method without using its output — for
+    # measuring latency/cost/agreement in production at zero behavior risk.
+    jev_shadow: bool = False
+    # Low timeout: a decision must be fast; on timeout we fail over to the LLM path.
+    jev_timeout_seconds: float = 5.0
+
     # Speech-to-text (Groq Whisper). turbo is fast + cheap; large-v3 is most accurate.
     stt_model: str = "whisper-large-v3-turbo"
 

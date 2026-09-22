@@ -30,6 +30,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Jev (TypeSafe System-One) decision model — optional, early-access. Used only at
+# structured decision points (see src/oli/jev.py), never for text generation. Kept out of
+# core deps so the default env resolves without early-access access; jev.py lazy-imports it
+# and fails over to the LLM path when absent. Install: uv sync --extra jev
+jev = ["pydantic-ai-slim[typesafe]>=0.0.14"]
 dev = [
     "ruff>=0.6",
     "mypy>=1.11",
