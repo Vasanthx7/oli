@@ -41,7 +41,6 @@ from .logging_config import configure_logging, get_logger  # noqa: E402
 from .memory import MemoryStore  # noqa: E402
 from .net_guard import UnsafeURLError, validate_url  # noqa: E402
 from .profiles import ProfileManager  # noqa: E402
-from .scheduler import Scheduler, initial_next_run  # noqa: E402
 from .storage import Storage  # noqa: E402
 from .stt import Transcriber  # noqa: E402
 from .tracing import configure_tracing  # noqa: E402
@@ -55,9 +54,6 @@ store = Storage()
 # Long-term memory shares the same store; register it so tools can reach it.
 memory_store = MemoryStore(store)
 memory.set_active(memory_store)
-
-# Proactive scheduler runs due tasks in the background for the server's lifetime.
-scheduler = Scheduler(store)
 
 # Persistent browser profiles (authenticated sessions the browse tool can reuse).
 profile_manager = ProfileManager(store)
@@ -81,11 +77,9 @@ async def lifespan(_app: FastAPI):
             detail="AUTH_PASSWORD is not set — every endpoint is publicly reachable. "
             "Set a strong AUTH_PASSWORD before exposing this app to the internet.",
         )
-    scheduler.start()
     try:
         yield
     finally:
-        await scheduler.stop()
         await profile_manager.shutdown()
         await live_browser.session().stop()
         await dispose_engine()
@@ -157,14 +151,6 @@ class RenameRequest(BaseModel):
 
 class MemoryRequest(BaseModel):
     content: str
-
-
-class ScheduledTaskRequest(BaseModel):
-    title: str
-    prompt: str
-    schedule_kind: str  # 'interval' | 'daily'
-    interval_sec: int | None = None
-    time_of_day: str | None = None  # 'HH:MM'
 
 
 class ProfileRequest(BaseModel):
@@ -339,76 +325,6 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-# --- proactive: scheduled tasks -----------------------------------------
-
-
-@app.get("/api/tasks")
-async def list_tasks():
-    return await store.list_scheduled_tasks()
-
-
-@app.post("/api/tasks")
-async def create_task(req: ScheduledTaskRequest):
-    if req.schedule_kind not in ("interval", "daily"):
-        raise HTTPException(status_code=400, detail="schedule_kind must be 'interval' or 'daily'")
-    now = time.time()
-    next_run = initial_next_run(req.schedule_kind, now, req.interval_sec, req.time_of_day)
-    tid = await store.add_scheduled_task(
-        title=req.title,
-        prompt=req.prompt,
-        schedule_kind=req.schedule_kind,
-        next_run=next_run,
-        interval_sec=req.interval_sec,
-        time_of_day=req.time_of_day,
-    )
-    return {"id": tid, "next_run": next_run}
-
-
-@app.post("/api/tasks/{tid}/toggle")
-async def toggle_task(tid: str, enabled: bool):
-    if not await store.get_scheduled_task(tid):
-        raise HTTPException(status_code=404, detail="Task not found")
-    await store.set_task_enabled(tid, enabled)
-    return {"ok": True}
-
-
-@app.post("/api/tasks/{tid}/run")
-async def run_task_now(tid: str):
-    task = await store.get_scheduled_task(tid)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return await scheduler.run_task(task, scheduled=False)
-
-
-@app.delete("/api/tasks/{tid}")
-async def delete_task(tid: str):
-    await store.delete_scheduled_task(tid)
-    return {"ok": True}
-
-
-# --- proactive: notifications -------------------------------------------
-
-
-@app.get("/api/notifications")
-async def list_notifications():
-    return {
-        "unread": await store.unread_count(),
-        "items": await store.list_notifications(),
-    }
-
-
-@app.post("/api/notifications/read")
-async def mark_read():
-    await store.mark_notifications_read()
-    return {"ok": True}
-
-
-@app.delete("/api/notifications/{nid}")
-async def delete_notification(nid: str):
-    await store.delete_notification(nid)
-    return {"ok": True}
 
 
 # --- browser profiles ----------------------------------------------------

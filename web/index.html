@@ -13,12 +13,10 @@
       <div class="sidebar-head">
         <span class="brand"><span class="brand-mark" data-icon="sparkle"></span>Oli</span>
         <div class="head-actions">
-          <button id="bell-btn" title="Notifications"><span data-icon="bell"></span><span id="bell-badge" class="badge hidden">0</span></button>
           <button id="new-chat" title="New chat"><span data-icon="plus"></span></button>
         </div>
       </div>
       <ul id="conversation-list"></ul>
-      <button id="tasks-btn" class="nav-btn" title="Scheduled proactive tasks"><span data-icon="clock"></span>Scheduled tasks</button>
       <button id="memory-btn" class="nav-btn" title="What Oli remembers"><span data-icon="memory"></span>Memory</button>
       <button id="profiles-btn" class="nav-btn" title="Logged-in browser profiles"><span data-icon="lock"></span>Browser profiles</button>
       <button id="live-btn" class="nav-btn" title="Watch and drive a live browser"><span data-icon="monitor"></span>Live browser</button>
@@ -58,43 +56,6 @@
         <button type="submit">Add</button>
       </form>
       <ul id="memory-list"></ul>
-    </div>
-  </div>
-
-  <div id="tasks-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h2><span data-icon="clock"></span>Scheduled tasks</h2>
-        <button id="tasks-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
-      </div>
-      <form id="task-add">
-        <input id="task-title" type="text" placeholder="Title (e.g. Morning briefing)" />
-        <textarea id="task-prompt" rows="2" placeholder="What should Oli do? (e.g. Summarize today's top tech news)"></textarea>
-        <div class="task-schedule">
-          <select id="task-kind">
-            <option value="daily">Daily at</option>
-            <option value="interval">Every</option>
-          </select>
-          <input id="task-time" type="time" value="07:00" />
-          <input id="task-interval" type="number" min="1" value="60" class="hidden" />
-          <select id="task-interval-unit" class="hidden">
-            <option value="60">minutes</option>
-            <option value="3600">hours</option>
-          </select>
-          <button type="submit">Add task</button>
-        </div>
-      </form>
-      <ul id="task-list"></ul>
-    </div>
-  </div>
-
-  <div id="notif-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h2><span data-icon="bell"></span>Notifications</h2>
-        <button id="notif-close" class="modal-x" title="Close"><span data-icon="close"></span></button>
-      </div>
-      <ul id="notif-list"></ul>
     </div>
   </div>
 

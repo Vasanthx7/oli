@@ -60,8 +60,8 @@ def _current_request_id() -> str | None:
     """The request id bound by the HTTP middleware, if this turn runs in a request.
 
     Threaded into the LangGraph run's trace metadata so a LangSmith trace can be
-    correlated back to the structured logs for the same turn. Scheduler-driven
-    turns run outside a request and simply have none."""
+    correlated back to the structured logs for the same turn. Turns run outside a
+    request (e.g. tests) simply have none."""
     return structlog.contextvars.get_contextvars().get("request_id")
 
 
@@ -359,9 +359,9 @@ async def run_turn(
 async def run_once(store: Storage, conversation_id: str, user_message: str) -> str:
     """Run a turn autonomously (no streaming consumer) and return the final answer.
 
-    Used by the scheduler for proactive tasks. Reuses the full graph, so tools and
-    memory work in scheduled runs exactly as in interactive chat. Raises on error
-    so the caller can record a failed notification.
+    A non-streaming convenience over :func:`run_turn` for callers that just want the
+    final text (e.g. tests). Reuses the full graph, so tools and memory work exactly as
+    in interactive chat. Raises on error.
     """
     final = ""
     async for event in run_turn(store, conversation_id, user_message):
