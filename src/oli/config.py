@@ -146,6 +146,15 @@ class Settings(BaseSettings):
     # Speech-to-text (Groq Whisper). turbo is fast + cheap; large-v3 is most accurate.
     stt_model: str = "whisper-large-v3-turbo"
 
+    # --- Text-to-speech (Groq PlayAI; OpenAI-compatible audio.speech) ---
+    # Empty tts_provider = OFF: the frontend uses the browser voice. "groq" enables the
+    # server-side neural voice, reusing the Groq key. See src/oli/tts.py + /api/tts.
+    tts_provider: str = ""
+    tts_model: str = "playai-tts"
+    tts_voice: str = "Celeste-PlayAI"
+    tts_format: str = "wav"  # Groq PlayAI returns wav; widely playable in the browser
+    tts_max_chars: int = 2000  # cap synthesis input (cost + latency)
+
     # --- Agent harness guardrails (per-turn safety rails beyond RECURSION_LIMIT) ---
     # Max tool executions in a single turn; hitting it ends the turn gracefully.
     max_tool_calls_per_turn: int = 8

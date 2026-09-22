@@ -33,7 +33,7 @@ from fastapi.responses import (  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, field_validator  # noqa: E402
 
-from . import config, live_browser, memory, metrics, profiles  # noqa: E402
+from . import config, live_browser, memory, metrics, profiles, tts  # noqa: E402
 from .agent import run_turn  # noqa: E402
 from .auth import BasicAuthMiddleware  # noqa: E402
 from .db import dispose_engine, init_models  # noqa: E402
@@ -266,6 +266,39 @@ async def transcribe(audio: UploadFile = File(...)):
         return {"text": text}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+
+
+# --- voice: text-to-speech ----------------------------------------------
+
+_TTS_MEDIA = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "ogg": "audio/ogg"}
+
+
+class TtsRequest(BaseModel):
+    text: str
+    voice: str | None = None
+
+
+@app.get("/api/tts/voices")
+async def tts_voice_list():
+    """Whether server TTS is on + the provider's voice names (for the frontend picker)."""
+    return {"enabled": tts.enabled(), "voices": tts.voices(), "default": config.settings.tts_voice}
+
+
+@app.post("/api/tts")
+async def tts_synthesize(req: TtsRequest):
+    """Synthesize reply text to audio. 503 when disabled/failed so the client falls back
+    to the browser voice — TTS must never block a reply."""
+    if not tts.enabled():
+        raise HTTPException(status_code=503, detail="Server TTS is disabled")
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty text")
+    try:
+        audio = await tts.Synthesizer().synthesize(text, req.voice)
+    except Exception as e:  # noqa: BLE001 — surface as 503 so the client falls back
+        raise HTTPException(status_code=503, detail=f"{type(e).__name__}: {e}") from e
+    fmt = config.settings.tts_format
+    return Response(content=audio, media_type=_TTS_MEDIA.get(fmt, f"audio/{fmt}"))
 
 
 # --- chat (SSE) ----------------------------------------------------------
