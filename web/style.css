@@ -570,6 +570,20 @@ html, body {
 }
 #voice-status.hidden { display: none; }
 
+#voice-select {
+  display: block;
+  max-width: 808px;
+  margin: -4px auto 10px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface, transparent);
+  border: 1px solid var(--border, #3333);
+  border-radius: 6px;
+}
+#voice-select.hidden { display: none; }
+
 /* ======================================================================
    Icons, scrollbars, and polish
    ====================================================================== */
