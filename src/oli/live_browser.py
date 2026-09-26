@@ -106,11 +106,14 @@ class LiveSession:
             self.profile = profile
 
             if profile:
-                # Persistent context => the login is saved to the profile's dir.
-                user_data_dir = str(profiles.profile_dir(profile))
-                profiles.profile_dir(profile).mkdir(parents=True, exist_ok=True)
-                self._context = await self._pw.chromium.launch_persistent_context(
-                    user_data_dir, headless=True, viewport=VIEWPORT
+                # Persistent context => the login is saved to the profile's dir. Use the
+                # SAME anti-bot launcher as browse, so cookies minted by an inline login are
+                # reused by an identical context (a saved login only stays valid headless on
+                # sites like Amazon if the browser looks real — see profiles.launch_persistent).
+                pdir = profiles.profile_dir(profile)
+                pdir.mkdir(parents=True, exist_ok=True)
+                self._context = await profiles.launch_persistent(
+                    self._pw, pdir, headless=True, viewport=VIEWPORT
                 )
                 self._page = (
                     self._context.pages[0]
@@ -118,8 +121,17 @@ class LiveSession:
                     else (await self._context.new_page())
                 )
             else:
-                self._browser = await self._pw.chromium.launch(headless=True)
-                self._context = await self._browser.new_context(viewport=VIEWPORT)
+                self._browser = await self._pw.chromium.launch(
+                    headless=True,
+                    args=profiles.STEALTH_ARGS,
+                    ignore_default_args=["--enable-automation"],
+                )
+                self._context = await self._browser.new_context(
+                    viewport=VIEWPORT,
+                    user_agent=profiles.FALLBACK_UA,
+                    locale="en-IN",
+                    timezone_id="Asia/Kolkata",
+                )
                 self._page = await self._context.new_page()
 
             self._cdp = await self._context.new_cdp_session(self._page)

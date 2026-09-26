@@ -94,6 +94,8 @@ write_files:
       CHAT_MODEL=qwen2.5:7b-instruct
       CHAT_API_KEY=ollama
       POSTGRES_PASSWORD=${postgres_password}
+      AUTH_USERNAME=${auth_username}
+      AUTH_PASSWORD=${auth_password}
       DUCKDNS_DOMAIN=${duckdns_subdomain}.duckdns.org
 
 runcmd:

@@ -28,10 +28,3 @@ async def test_ensure_conversation_is_idempotent(storage):
     await storage.ensure_conversation("fixed-id", "Task thread")
     await storage.ensure_conversation("fixed-id", "Task thread")
     assert await storage.conversation_exists("fixed-id")
-
-
-async def test_notifications_unread_flow(storage):
-    await storage.add_notification("Briefing", "content", status="ok")
-    assert await storage.unread_count() == 1
-    await storage.mark_notifications_read()
-    assert await storage.unread_count() == 0

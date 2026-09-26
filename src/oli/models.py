@@ -9,7 +9,7 @@ UUID strings for stability across databases.
 import time
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import Float, ForeignKey, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -62,33 +62,6 @@ class Memory(Base):
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[bytes] = mapped_column(LargeBinary)  # float32 vector bytes
     source: Mapped[str] = mapped_column(String(16), default="auto")  # auto | explicit
-    created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)
-
-
-class ScheduledTask(Base):
-    __tablename__ = "scheduled_tasks"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    title: Mapped[str] = mapped_column(String(200))
-    prompt: Mapped[str] = mapped_column(Text)
-    schedule_kind: Mapped[str] = mapped_column(String(16))  # interval | daily
-    interval_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    time_of_day: Mapped[str | None] = mapped_column(String(5), nullable=True)  # HH:MM
-    enabled: Mapped[bool] = mapped_column(Integer, default=1)
-    last_run: Mapped[float | None] = mapped_column(Float, nullable=True)
-    next_run: Mapped[float] = mapped_column(Float, index=True)
-    created_at: Mapped[float] = mapped_column(Float, default=_now)
-
-
-class Notification(Base):
-    __tablename__ = "notifications"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    task_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    title: Mapped[str] = mapped_column(String(200))
-    content: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok | error
-    read: Mapped[bool] = mapped_column(Integer, default=0)
     created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)
 
 

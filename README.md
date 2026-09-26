@@ -4,7 +4,7 @@
 
 **Oli** (Tamil: ஒளி, "light / radiance") is a personal AI assistant that runs as a web
 app: chat with streaming responses, a configurable personality, persistent conversation
-history, long-term memory, voice, proactive scheduled tasks, and live-internet tools —
+history, long-term memory, voice, and live-internet tools —
 web search, page fetch, and autonomous browsing via
 [browser-use](https://github.com/browser-use/browser-use).
 
@@ -55,7 +55,6 @@ src/oli/
   embeddings.py    local text embeddings (fastembed / bge-small)
   memory.py        long-term memory: remember, recall, auto-extract facts
   stt.py           speech-to-text via Groq Whisper
-  scheduler.py     proactive scheduler: runs tasks on a schedule -> notifications
   profiles.py      persistent browser profiles: one-time human login -> reusable cookies
   live_browser.py  live browser view: CDP screencast + input over a WebSocket
   tools/
@@ -79,23 +78,6 @@ it listens again automatically.
 This is turn-based voice. True duplex realtime with barge-in (interrupt mid-reply)
 would need a realtime speech provider (OpenAI Realtime / Gemini Live) — noted on
 the roadmap.
-
-## Proactive tasks
-
-Oli can act on a schedule without being asked. From the **⏰ Scheduled tasks**
-panel, create a task with a prompt and a schedule:
-
-- **Daily** at a chosen time (e.g. a 7:00 AM news briefing)
-- **Every** N minutes/hours (e.g. watch a page and report changes)
-
-A background scheduler runs due tasks through the full agent loop and files each
-result as a **notification** (the 🔔 bell, with an unread badge). Each task keeps
-its own conversation thread so it has continuity across runs. Run any task
-immediately with **Run now**. Manage via `GET/POST/DELETE /api/tasks` and
-`/api/notifications`.
-
-Because the scheduler lives inside the server process, proactive tasks run
-whenever the server is up — which, on the always-on VM, is all the time.
 
 ## Logged-in browsing (browser profiles)
 
@@ -239,8 +221,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
 - [x] Chat brain: streaming, personality, history
 - [x] Tools: search, fetch, browse
 - [x] Long-term memory (local embeddings, auto-recall + remember/recall tools)
-- [x] Voice (Groq Whisper STT + browser speech synthesis, hands-free loop)
-- [x] Proactive/ambient (scheduler: daily/interval tasks → notifications)
+- [x] Voice (Groq Whisper STT + neural/browser TTS, hands-free loop)
 
 **Productionization (in progress):**
 

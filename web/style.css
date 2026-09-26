@@ -48,7 +48,7 @@ html, body {
 }
 .brand { font-family: var(--font-serif); font-style: italic; font-weight: 700; letter-spacing: 0.2px; font-size: 17px; }
 .head-actions { display: flex; gap: 6px; align-items: center; }
-#new-chat, #bell-btn {
+#new-chat {
   background: var(--accent-soft);
   color: var(--accent);
   border: none;
@@ -59,33 +59,7 @@ html, body {
   position: relative;
   padding: 0 6px;
 }
-#new-chat:hover, #bell-btn:hover { background: var(--accent); color: #fff; }
-.badge {
-  position: absolute;
-  top: -6px; right: -6px;
-  background: var(--danger);
-  color: #fff;
-  font-size: 10px;
-  min-width: 16px; height: 16px;
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  padding: 0 4px;
-}
-.badge.hidden { display: none; }
-
-#tasks-btn {
-  margin: 8px 8px 0;
-  padding: 10px 12px;
-  background: transparent;
-  color: var(--text);
-  border: none;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  cursor: pointer;
-  font-size: 14px;
-  text-align: left;
-}
-#tasks-btn:hover { background: var(--panel); border-bottom-color: var(--accent); }
+#new-chat:hover { background: var(--accent); color: #fff; }
 #conversation-list { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
 #conversation-list li {
   padding: 10px 12px;
@@ -208,65 +182,6 @@ html, body {
 #memory-list li .mem-del { background: none; border: none; color: var(--muted); cursor: pointer; }
 #memory-list li .mem-del:hover { color: var(--danger); }
 #memory-list .mem-empty { color: var(--muted); border: none; justify-content: center; }
-
-/* --- tasks + notifications --- */
-#task-add { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
-#task-add input, #task-add textarea, #task-add select {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 10px 12px;
-  font: inherit;
-  outline: none;
-}
-#task-add input:focus, #task-add textarea:focus { border-color: var(--accent); }
-.task-schedule { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.task-schedule select, .task-schedule input { flex: 0 0 auto; }
-.task-schedule input[type="number"] { width: 70px; }
-.task-schedule button {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  cursor: pointer;
-  margin-left: auto;
-}
-#task-add .hidden { display: none; }
-
-#task-list, #notif-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
-#task-list li, #notif-list li {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  font-size: 14px;
-}
-.task-row-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.task-title { font-weight: 600; }
-.task-meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-top: 4px; }
-.task-actions { display: flex; gap: 6px; flex-shrink: 0; }
-.task-actions button {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.task-actions button:hover { border-color: var(--accent); }
-.task-actions .danger:hover { border-color: var(--danger); color: var(--danger); }
-.task-disabled { opacity: 0.55; }
-
-.notif-title { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
-.notif-title .notif-del { background: none; border: none; color: var(--muted); cursor: pointer; }
-.notif-title .notif-del:hover { color: var(--danger); }
-.notif-content { margin-top: 6px; line-height: 1.5; white-space: pre-wrap; }
-.notif-time { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 6px; }
-.notif-error { border-left: 3px solid var(--danger); }
-#notif-list .notif-empty, #task-list .task-empty { color: var(--muted); text-align: center; border: none; }
 
 /* --- browser profiles --- */
 .modal-note {
@@ -570,6 +485,20 @@ html, body {
 }
 #voice-status.hidden { display: none; }
 
+#voice-select {
+  display: block;
+  max-width: 808px;
+  margin: -4px auto 10px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface, transparent);
+  border: 1px solid var(--border, #3333);
+  border-radius: 6px;
+}
+#voice-select.hidden { display: none; }
+
 /* ======================================================================
    Icons, scrollbars, and polish
    ====================================================================== */
@@ -591,8 +520,7 @@ html, body {
 #live-take,
 #live-resume,
 #live-agent-bar button,
-.prof-actions .finish,
-.task-actions button {
+.prof-actions .finish {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -601,13 +529,11 @@ html, body {
 
 /* Icon-only buttons: center the glyph in the box. */
 #new-chat,
-#bell-btn,
 #send,
 #mic,
 .modal-x,
 .del,
-.mem-del,
-.notif-del {
+.mem-del {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -620,7 +546,7 @@ html, body {
 .modal-head h2 .icon { width: 19px; height: 19px; color: var(--accent); }
 #send .icon, #mic .icon { width: 20px; height: 20px; }
 .avatar .icon { width: 17px; height: 17px; }
-.del .icon, .mem-del .icon, .notif-del .icon { width: 15px; height: 15px; }
+.del .icon, .mem-del .icon { width: 15px; height: 15px; }
 .modal-x .icon { width: 18px; height: 18px; }
 #live-agent-note .icon { width: 17px; height: 17px; }
 
