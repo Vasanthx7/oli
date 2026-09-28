@@ -165,7 +165,10 @@ jobs:
         run: |
           # Pass the tag as a positional arg to the remote shell (quoted heredoc
           # + $1) so nothing from the input is interpolated into the script body.
-          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${DEPLOY_HOST}" bash -s "$IMAGE_TAG" <<'EOF'
+          # Runs as root via sudo (passwordless on the AWS ubuntu user): /opt/oli/.env
+          # is root-owned 0600, the GHCR docker login lives in root's config, and
+          # docker access is root's — so the whole script must run privileged.
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${DEPLOY_HOST}" sudo bash -s "$IMAGE_TAG" <<'EOF'
           set -euo pipefail
           TAG="$1"
           cd /opt/oli

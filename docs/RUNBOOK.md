@@ -103,6 +103,7 @@ CI backup step first):
 
 ```bash
 ssh ubuntu@<box>          # over Tailscale
+sudo -i                   # /opt/oli/.env is root-owned 0600; GHCR login + docker are root's
 cd /opt/oli
 sed -i "s|^OLI_IMAGE_TAG=.*|OLI_IMAGE_TAG=<sha>|" .env
 docker compose -f docker-compose.prod.yml pull app
@@ -123,6 +124,7 @@ Restore the latest backup (destructive — replaces current DB contents):
 
 ```bash
 ssh ubuntu@<box>
+sudo -i
 cd /opt/oli
 LATEST=$(ls -1t backups/oli-*.sql.gz | head -1)
 docker compose -f docker-compose.prod.yml stop app        # stop writers first
@@ -137,6 +139,9 @@ docker compose -f docker-compose.prod.yml up -d app
 > the recommended next follow-up.
 
 ### Operating
+
+Run these as root (`sudo -i` after `ssh ubuntu@<box>`) — `/opt/oli/.env` and the
+docker socket / GHCR login belong to root:
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f app     # app logs
