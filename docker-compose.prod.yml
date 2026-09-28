@@ -29,9 +29,12 @@ services:
       retries: 10
 
   app:
-    image: ghcr.io/vasanthx7/oli:latest
+    # Tag is pinned per deploy: CI writes OLI_IMAGE_TAG=<commit sha> into .env so
+    # `up -d` runs an exact build (and survives reboots / manual `up -d`). Falls
+    # back to :latest when unset. See .github/workflows/ci.yml (deploy job).
+    image: ghcr.io/vasanthx7/oli:${OLI_IMAGE_TAG:-latest}
     restart: unless-stopped
-    env_file: .env  # GROQ_API_KEY, CHAT_*, POSTGRES_PASSWORD, etc.
+    env_file: .env  # GROQ_API_KEY, FARA_*, POSTGRES_PASSWORD, OLI_IMAGE_TAG, etc.
     environment:
       DATABASE_URL: postgresql+asyncpg://oli:${POSTGRES_PASSWORD}@db:5432/oli
       HOST: 0.0.0.0
