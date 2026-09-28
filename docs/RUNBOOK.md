@@ -64,23 +64,84 @@ operator's home-PC Ollama over Tailscale, browse on Groq.
 7. Wait a minute or two for cloud-init to finish (Docker/Tailscale install +
    first `docker compose up`), then open the `url` output.
 
-### Rolling out a new release
+### Rolling out a new release (automatic)
 
-CI (`.github/workflows/ci.yml`) builds and pushes `ghcr.io/vasanthx7/oli:latest`
-on every push to `main` that passes tests. Auto-deploy-on-push is **not** wired
-up (kept out of scope to limit blast radius) — after CI publishes:
+A push to `main` runs `.github/workflows/ci.yml`: `quality` → `container` →
+`publish` (pushes `ghcr.io/vasanthx7/oli:latest` **and** `:<commit-sha>`) →
+**`deploy`**. The `deploy` job joins the tailnet, SSHes to the box over Tailscale,
+pins that commit's SHA (`OLI_IMAGE_TAG` in `/opt/oli/.env`), and runs
+`compose pull app && up -d`, then gates on `https://<domain>/health/ready`.
+Migrations run automatically — the image's `CMD` runs `alembic upgrade head`
+before uvicorn. No manual step is needed for a normal release.
+
+Prod runs an **exact pinned SHA**, not `:latest` — `docker-compose.prod.yml` uses
+`image: ghcr.io/vasanthx7/oli:${OLI_IMAGE_TAG:-latest}` and the deploy writes the
+SHA to `.env`, so reboots and manual `up -d` keep running the same build.
+
+**One-time deploy prerequisites** (in addition to the setup above):
+
+- **Tailscale OAuth client** (admin console → Settings → OAuth clients) with the
+  `auth_keys` write scope, tagged `tag:ci`.
+- **Tailscale ACL `ssh` rule** so the CI node may open a session as `ubuntu`
+  non-interactively (action must be `accept`, not `check`):
+  ```jsonc
+  "ssh": [{ "action": "accept", "src": ["tag:ci"], "dst": ["tag:server"], "users": ["ubuntu"] }]
+  ```
+  (Ensure the EC2 box carries `tag:server`, or adjust `dst` to its tag.)
+- **GitHub repo secrets:** `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`,
+  `DEPLOY_HOST` (the box's MagicDNS name or tailnet IP), `DEPLOY_DOMAIN`
+  (`<subdomain>.duckdns.org`).
+
+### Rolling back / redeploying a specific build
+
+Run the **CI workflow manually** (Actions → CI → *Run workflow*) with
+`image_tag` set to a known-good commit SHA (or `latest`). This skips build/publish
+and just redeploys that tag — same pull/up/health-gate path.
+
+Equivalent manual one-liner on the box if you can't use Actions (mirror the
+CI backup step first):
 
 ```bash
-ssh ubuntu@<elastic-ip>
+ssh ubuntu@<box>          # over Tailscale
+sudo -i                   # /opt/oli/.env is root-owned 0600; GHCR login + docker are root's
 cd /opt/oli
-docker compose -f docker-compose.prod.yml pull
+sed -i "s|^OLI_IMAGE_TAG=.*|OLI_IMAGE_TAG=<sha>|" .env
+docker compose -f docker-compose.prod.yml pull app
+mkdir -p backups && docker compose -f docker-compose.prod.yml exec -T db \
+  pg_dump -U oli -d oli | gzip > "backups/oli-$(date +%Y%m%d-%H%M%S).sql.gz"
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Migrations run automatically — the image's `CMD` runs `alembic upgrade head`
-before starting uvicorn.
+### Database backups & restore
+
+Every deploy takes a `pg_dump` **before** the new image runs its migrations
+(`alembic upgrade head` on boot), so a bad migration is recoverable. Dumps are
+gzipped to `/opt/oli/backups/oli-<timestamp>.sql.gz`; the **7 most recent** are
+kept. If the dump fails the deploy aborts (`set -o pipefail`) — migrations never
+run without a fresh snapshot.
+
+Restore the latest backup (destructive — replaces current DB contents):
+
+```bash
+ssh ubuntu@<box>
+sudo -i
+cd /opt/oli
+LATEST=$(ls -1t backups/oli-*.sql.gz | head -1)
+docker compose -f docker-compose.prod.yml stop app        # stop writers first
+gunzip -c "$LATEST" | docker compose -f docker-compose.prod.yml exec -T db \
+  psql -U oli -d oli
+docker compose -f docker-compose.prod.yml up -d app
+```
+
+> **Caveat: backups are on the instance's root volume, not offsite.** They protect
+> against a bad migration, **not** loss of the instance/volume itself
+> (`terraform destroy`, a disk failure). Copying dumps to S3 (or another host) is
+> the recommended next follow-up.
 
 ### Operating
+
+Run these as root (`sudo -i` after `ssh ubuntu@<box>`) — `/opt/oli/.env` and the
+docker socket / GHCR login belong to root:
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f app     # app logs
@@ -88,8 +149,9 @@ docker compose -f docker-compose.prod.yml logs -f caddy    # cert/TLS issues
 docker compose -f docker-compose.prod.yml exec db psql -U oli -d oli
 ```
 
-- `terraform destroy` tears everything down (no backups exist yet — see ADR
-  0012's deferred items — so this **deletes all conversation/memory data**).
+- `terraform destroy` tears everything down. Per-deploy dumps live on the
+  instance's root volume, so `destroy` (or losing the volume) still **deletes all
+  conversation/memory data** — copy a dump off-box first if you want to keep it.
 - If chat errors out, check Tailscale first: `tailscale status` on both the
   instance and the home PC, and confirm Ollama is actually listening on
   `0.0.0.0:11434` on the home PC.

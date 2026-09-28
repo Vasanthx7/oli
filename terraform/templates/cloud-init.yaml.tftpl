@@ -54,7 +54,8 @@ write_files:
             retries: 10
 
         app:
-          image: ghcr.io/${ghcr_username}/oli:latest
+          # Pinned per deploy via OLI_IMAGE_TAG in .env (CI deploy job); :latest fallback.
+          image: ghcr.io/${ghcr_username}/oli:$${OLI_IMAGE_TAG:-latest}
           restart: unless-stopped
           env_file: .env
           environment:
@@ -90,13 +91,19 @@ write_files:
     permissions: '0600'
     content: |
       GROQ_API_KEY=${groq_api_key}
-      CHAT_BASE_URL=http://${home_ollama_tailscale_ip}:11434/v1
-      CHAT_MODEL=qwen2.5:7b-instruct
-      CHAT_API_KEY=ollama
+      # Local Fara-1.5 computer-use model runs on the home PC's Ollama, reached
+      # over Tailscale (see ADR 0017). These are the vars config.py actually reads
+      # (the old CHAT_* vars were dropped when chat moved to the cloud chain).
+      BROWSE_ENGINE=fara
+      FARA_BASE_URL=http://${home_ollama_tailscale_ip}:11434/v1
+      FARA_MODEL=fara15-4b
+      FARA_API_KEY=ollama
       POSTGRES_PASSWORD=${postgres_password}
       AUTH_USERNAME=${auth_username}
       AUTH_PASSWORD=${auth_password}
       DUCKDNS_DOMAIN=${duckdns_subdomain}.duckdns.org
+      # Set per deploy by CI; :latest until the first automated rollout.
+      OLI_IMAGE_TAG=latest
 
 runcmd:
   - systemctl enable --now swapfile.service

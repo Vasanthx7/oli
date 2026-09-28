@@ -8,6 +8,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual rollout / rollback: redeploy an already-published image by tag
+  # (SHA or `latest`) without rebuilding. See the deploy job below.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to (re)deploy — a commit SHA to roll back to, or 'latest'"
+        required: true
+        default: latest
 
 jobs:
   quality:
@@ -122,3 +130,86 @@ jobs:
           tags: |
             ghcr.io/vasanthx7/oli:latest
             ghcr.io/vasanthx7/oli:${{ github.sha }}
+
+  deploy:
+    name: Deploy to EC2 over Tailscale
+    runs-on: ubuntu-latest
+    needs: [publish]
+    # Push to main: deploy this commit's SHA, but only once publish succeeds.
+    # workflow_dispatch: redeploy the requested tag (rollback) — publish is
+    # skipped, so gate on the event instead of needing publish.
+    if: >-
+      ${{ always() && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || needs.publish.result == 'success') }}
+    # Never let two rollouts race on the box; queue them instead of cancelling.
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      # Join the operator's tailnet ephemerally (tagged tag:ci). Port 22 on the
+      # box is CIDR-locked to the operator, so we reach it over Tailscale SSH —
+      # auth is by tailnet identity via an ACL ssh rule (tag:ci -> ubuntu),
+      # no SSH key needed. See docs/RUNBOOK.md.
+      - name: Connect to tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Deploy image (backup DB, pull, up, prune)
+        env:
+          # Push -> this commit; dispatch -> the tag the operator chose.
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          # Pass the tag as a positional arg to the remote shell (quoted heredoc
+          # + $1) so nothing from the input is interpolated into the script body.
+          # Runs as root via sudo (passwordless on the AWS ubuntu user): /opt/oli/.env
+          # is root-owned 0600, the GHCR docker login lives in root's config, and
+          # docker access is root's — so the whole script must run privileged.
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${DEPLOY_HOST}" sudo bash -s "$IMAGE_TAG" <<'EOF'
+          set -euo pipefail
+          TAG="$1"
+          cd /opt/oli
+          # Persist the pinned tag so reboots / manual `up -d` run the same image.
+          if grep -q '^OLI_IMAGE_TAG=' .env; then
+            sed -i "s|^OLI_IMAGE_TAG=.*|OLI_IMAGE_TAG=${TAG}|" .env
+          else
+            echo "OLI_IMAGE_TAG=${TAG}" >> .env
+          fi
+          docker compose -f docker-compose.prod.yml pull app
+
+          # Back up the DB BEFORE the new image starts (its CMD runs
+          # `alembic upgrade head` on boot). set -o pipefail aborts the deploy if
+          # the dump fails, so migrations never run without a fresh snapshot.
+          # Dump to a temp name and rename only on success so a failed/partial
+          # dump can't masquerade as a good backup. On-box only — see RUNBOOK for
+          # the restore steps and the offsite-copy caveat.
+          mkdir -p backups
+          STAMP="$(date +%Y%m%d-%H%M%S)"
+          docker compose -f docker-compose.prod.yml exec -T db \
+            pg_dump -U oli -d oli | gzip > "backups/.oli-${STAMP}.sql.gz.part"
+          mv "backups/.oli-${STAMP}.sql.gz.part" "backups/oli-${STAMP}.sql.gz"
+          # Keep the 7 most recent backups; drop older ones to bound disk use.
+          ls -1t backups/oli-*.sql.gz | tail -n +8 | xargs -r rm -f
+
+          docker compose -f docker-compose.prod.yml up -d
+          docker image prune -f
+          EOF
+
+      # Gate the release on the full public path: DuckDNS -> Caddy TLS -> app ->
+      # DB. /health/ready is auth-exempt, so no credentials are needed.
+      - name: Verify readiness
+        env:
+          DEPLOY_DOMAIN: ${{ secrets.DEPLOY_DOMAIN }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "https://${DEPLOY_DOMAIN}/health/ready" | grep -q '"status":"ready"'; then
+              echo "readiness OK"
+              exit 0
+            fi
+            sleep 4
+          done
+          echo "readiness gate failed after deploy" >&2
+          exit 1
