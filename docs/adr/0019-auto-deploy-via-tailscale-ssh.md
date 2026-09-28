@@ -46,10 +46,11 @@ The box already runs `tailscale up --ssh`, which is the opening.
 - Prod is reproducible and rollback is one manual workflow run to a known-good SHA.
 - New operational secrets to hold: `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`,
   `DEPLOY_HOST`, `DEPLOY_DOMAIN`, plus a Tailscale ACL `ssh` rule (`tag:ci` → `ubuntu`).
-- **Backups remain unaddressed.** Automated deploys now run migrations unattended against
-  a single `pgdata` volume with no snapshot — the blast radius of a bad migration grows.
-  A `pg_dump`-before-deploy (or scheduled dumps) is the recommended next follow-up, still
-  deferred here to keep this change contained.
+- **A `pg_dump` runs before every deploy.** Because automated deploys run migrations
+  unattended, the deploy job snapshots the DB (gzipped to `/opt/oli/backups/`, 7 kept)
+  *before* the new image starts, and aborts if the dump fails — so a bad migration is
+  recoverable. Remaining gap: dumps sit on the instance's root volume, not offsite, so
+  they don't cover instance/volume loss — an S3 (or off-box) copy is the next follow-up.
 - The deploy is push-based and stateless on the box (no Watchtower/agent); if a rollout
   is needed while GitHub is unreachable, the manual one-liner in the RUNBOOK is the
   fallback.
