@@ -64,21 +64,54 @@ operator's home-PC Ollama over Tailscale, browse on Groq.
 7. Wait a minute or two for cloud-init to finish (Docker/Tailscale install +
    first `docker compose up`), then open the `url` output.
 
-### Rolling out a new release
+### Rolling out a new release (automatic)
 
-CI (`.github/workflows/ci.yml`) builds and pushes `ghcr.io/vasanthx7/oli:latest`
-on every push to `main` that passes tests. Auto-deploy-on-push is **not** wired
-up (kept out of scope to limit blast radius) — after CI publishes:
+A push to `main` runs `.github/workflows/ci.yml`: `quality` → `container` →
+`publish` (pushes `ghcr.io/vasanthx7/oli:latest` **and** `:<commit-sha>`) →
+**`deploy`**. The `deploy` job joins the tailnet, SSHes to the box over Tailscale,
+pins that commit's SHA (`OLI_IMAGE_TAG` in `/opt/oli/.env`), and runs
+`compose pull app && up -d`, then gates on `https://<domain>/health/ready`.
+Migrations run automatically — the image's `CMD` runs `alembic upgrade head`
+before uvicorn. No manual step is needed for a normal release.
+
+Prod runs an **exact pinned SHA**, not `:latest` — `docker-compose.prod.yml` uses
+`image: ghcr.io/vasanthx7/oli:${OLI_IMAGE_TAG:-latest}` and the deploy writes the
+SHA to `.env`, so reboots and manual `up -d` keep running the same build.
+
+**One-time deploy prerequisites** (in addition to the setup above):
+
+- **Tailscale OAuth client** (admin console → Settings → OAuth clients) with the
+  `auth_keys` write scope, tagged `tag:ci`.
+- **Tailscale ACL `ssh` rule** so the CI node may open a session as `ubuntu`
+  non-interactively (action must be `accept`, not `check`):
+  ```jsonc
+  "ssh": [{ "action": "accept", "src": ["tag:ci"], "dst": ["tag:server"], "users": ["ubuntu"] }]
+  ```
+  (Ensure the EC2 box carries `tag:server`, or adjust `dst` to its tag.)
+- **GitHub repo secrets:** `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`,
+  `DEPLOY_HOST` (the box's MagicDNS name or tailnet IP), `DEPLOY_DOMAIN`
+  (`<subdomain>.duckdns.org`).
+
+### Rolling back / redeploying a specific build
+
+Run the **CI workflow manually** (Actions → CI → *Run workflow*) with
+`image_tag` set to a known-good commit SHA (or `latest`). This skips build/publish
+and just redeploys that tag — same pull/up/health-gate path.
+
+Equivalent manual one-liner on the box if you can't use Actions:
 
 ```bash
-ssh ubuntu@<elastic-ip>
+ssh ubuntu@<box>          # over Tailscale
 cd /opt/oli
-docker compose -f docker-compose.prod.yml pull
+sed -i "s|^OLI_IMAGE_TAG=.*|OLI_IMAGE_TAG=<sha>|" .env
+docker compose -f docker-compose.prod.yml pull app
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Migrations run automatically — the image's `CMD` runs `alembic upgrade head`
-before starting uvicorn.
+> **No database backups yet.** A deploy runs migrations against the single
+> `pgdata` volume with no snapshot — a bad migration is not recoverable. Taking a
+> `pg_dump` before a risky rollout (or scheduling dumps) is the recommended next
+> follow-up (see ADR 0012's deferred items).
 
 ### Operating
 

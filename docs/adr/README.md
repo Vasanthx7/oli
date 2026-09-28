@@ -25,3 +25,4 @@ Format follows [Michael Nygard's ADR template](https://cognitect.com/blog/2011/1
 | [0016](0016-native-fara-browse-engine.md) | Native Fara-1.5 browse engine (local, no cloud fallback) | Accepted |
 | [0017](0017-cloud-provider-failover-local-vision-only.md) | Cloud provider failover for chat; local model for computer-use only | Accepted |
 | [0018](0018-resumable-browse-handover.md) | Resumable browse handover (ask the user mid-task, then continue) | Accepted |
+| [0019](0019-auto-deploy-via-tailscale-ssh.md) | Auto-deploy on merge to main via Tailscale SSH, pinned to the commit SHA | Accepted |
