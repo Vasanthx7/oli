@@ -157,7 +157,7 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Deploy image (pull + up + prune)
+      - name: Deploy image (backup DB, pull, up, prune)
         env:
           # Push -> this commit; dispatch -> the tag the operator chose.
           IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
@@ -176,6 +176,21 @@ jobs:
             echo "OLI_IMAGE_TAG=${TAG}" >> .env
           fi
           docker compose -f docker-compose.prod.yml pull app
+
+          # Back up the DB BEFORE the new image starts (its CMD runs
+          # `alembic upgrade head` on boot). set -o pipefail aborts the deploy if
+          # the dump fails, so migrations never run without a fresh snapshot.
+          # Dump to a temp name and rename only on success so a failed/partial
+          # dump can't masquerade as a good backup. On-box only — see RUNBOOK for
+          # the restore steps and the offsite-copy caveat.
+          mkdir -p backups
+          STAMP="$(date +%Y%m%d-%H%M%S)"
+          docker compose -f docker-compose.prod.yml exec -T db \
+            pg_dump -U oli -d oli | gzip > "backups/.oli-${STAMP}.sql.gz.part"
+          mv "backups/.oli-${STAMP}.sql.gz.part" "backups/oli-${STAMP}.sql.gz"
+          # Keep the 7 most recent backups; drop older ones to bound disk use.
+          ls -1t backups/oli-*.sql.gz | tail -n +8 | xargs -r rm -f
+
           docker compose -f docker-compose.prod.yml up -d
           docker image prune -f
           EOF

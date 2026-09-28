@@ -98,20 +98,43 @@ Run the **CI workflow manually** (Actions → CI → *Run workflow*) with
 `image_tag` set to a known-good commit SHA (or `latest`). This skips build/publish
 and just redeploys that tag — same pull/up/health-gate path.
 
-Equivalent manual one-liner on the box if you can't use Actions:
+Equivalent manual one-liner on the box if you can't use Actions (mirror the
+CI backup step first):
 
 ```bash
 ssh ubuntu@<box>          # over Tailscale
 cd /opt/oli
 sed -i "s|^OLI_IMAGE_TAG=.*|OLI_IMAGE_TAG=<sha>|" .env
 docker compose -f docker-compose.prod.yml pull app
+mkdir -p backups && docker compose -f docker-compose.prod.yml exec -T db \
+  pg_dump -U oli -d oli | gzip > "backups/oli-$(date +%Y%m%d-%H%M%S).sql.gz"
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-> **No database backups yet.** A deploy runs migrations against the single
-> `pgdata` volume with no snapshot — a bad migration is not recoverable. Taking a
-> `pg_dump` before a risky rollout (or scheduling dumps) is the recommended next
-> follow-up (see ADR 0012's deferred items).
+### Database backups & restore
+
+Every deploy takes a `pg_dump` **before** the new image runs its migrations
+(`alembic upgrade head` on boot), so a bad migration is recoverable. Dumps are
+gzipped to `/opt/oli/backups/oli-<timestamp>.sql.gz`; the **7 most recent** are
+kept. If the dump fails the deploy aborts (`set -o pipefail`) — migrations never
+run without a fresh snapshot.
+
+Restore the latest backup (destructive — replaces current DB contents):
+
+```bash
+ssh ubuntu@<box>
+cd /opt/oli
+LATEST=$(ls -1t backups/oli-*.sql.gz | head -1)
+docker compose -f docker-compose.prod.yml stop app        # stop writers first
+gunzip -c "$LATEST" | docker compose -f docker-compose.prod.yml exec -T db \
+  psql -U oli -d oli
+docker compose -f docker-compose.prod.yml up -d app
+```
+
+> **Caveat: backups are on the instance's root volume, not offsite.** They protect
+> against a bad migration, **not** loss of the instance/volume itself
+> (`terraform destroy`, a disk failure). Copying dumps to S3 (or another host) is
+> the recommended next follow-up.
 
 ### Operating
 
@@ -121,8 +144,9 @@ docker compose -f docker-compose.prod.yml logs -f caddy    # cert/TLS issues
 docker compose -f docker-compose.prod.yml exec db psql -U oli -d oli
 ```
 
-- `terraform destroy` tears everything down (no backups exist yet — see ADR
-  0012's deferred items — so this **deletes all conversation/memory data**).
+- `terraform destroy` tears everything down. Per-deploy dumps live on the
+  instance's root volume, so `destroy` (or losing the volume) still **deletes all
+  conversation/memory data** — copy a dump off-box first if you want to keep it.
 - If chat errors out, check Tailscale first: `tailscale status` on both the
   instance and the home PC, and confirm Ollama is actually listening on
   `0.0.0.0:11434` on the home PC.
