@@ -1,0 +1,54 @@
+name: Preflight (deploy connectivity)
+
+# Throwaway validation for the CD path: proves the GitHub runner can join the
+# tailnet, SSH to the box over Tailscale SSH (ACL), sudo to root, reach docker +
+# /opt/oli/.env, and hit the public health endpoint — WITHOUT deploying anything
+# or touching the database. Run it from Actions -> Preflight -> Run workflow once
+# the four secrets are set, then delete this file once the first real deploy is
+# green. Requires: TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, DEPLOY_HOST, DEPLOY_DOMAIN.
+on:
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    name: Verify tailnet SSH + sudo + health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: SSH to the box, sudo, inspect (read-only)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${DEPLOY_HOST}" sudo bash -s <<'EOF'
+          set -euo pipefail
+          echo "running as: $(whoami)"
+          echo "--- containers ---"
+          docker compose -f /opt/oli/docker-compose.prod.yml ps 2>/dev/null || docker ps
+          if [ -r /opt/oli/.env ]; then
+            echo ".env: readable"
+            grep -q '^OLI_IMAGE_TAG=' /opt/oli/.env \
+              && echo "OLI_IMAGE_TAG: present" \
+              || echo "OLI_IMAGE_TAG: missing (the deploy will append it — fine)"
+            grep -q '^FARA_BASE_URL=' /opt/oli/.env \
+              && echo "FARA_BASE_URL: present" \
+              || echo "FARA_BASE_URL: MISSING (browse will not reach home Ollama)"
+          else
+            echo ".env: NOT readable — deploy would fail"; exit 1
+          fi
+          echo "PREFLIGHT-SSH-OK"
+          EOF
+
+      - name: Verify public health endpoint
+        env:
+          DEPLOY_DOMAIN: ${{ secrets.DEPLOY_DOMAIN }}
+        run: |
+          echo "GET https://${DEPLOY_DOMAIN}/health/ready"
+          curl -fsS "https://${DEPLOY_DOMAIN}/health/ready"
+          echo
+          echo "PREFLIGHT-HEALTH-OK"
