@@ -39,6 +39,15 @@ def _with_timeout(
     return wrapper
 
 
+def _timeout_for(name: str) -> int:
+    """Per-tool hard-timeout budget. Browse runs for minutes (multi-step commerce flows)
+    and is bounded gracefully by MAX_STEPS + fara_deadline_seconds, so it gets its own,
+    larger backstop; the quick tools keep the tight default."""
+    if name == "browse":
+        return settings.browse_timeout_seconds
+    return settings.tool_timeout_seconds
+
+
 class Tool(TypedDict):
     schema: dict
     handler: Callable[..., Awaitable[str]]
@@ -64,12 +73,13 @@ def langchain_tools() -> list[StructuredTool]:
     inferred from the handler's type hints. The async handler is used directly as
     the tool's coroutine.
     """
-    timeout = settings.tool_timeout_seconds
     tools: list[StructuredTool] = []
     for name, tool in _TOOLS.items():
         fn = tool["schema"]["function"]
         handler = tool["handler"]
-        # Cap each tool call so a hung tool can't stall a turn (0 = disabled).
+        # Cap each tool call so a hung tool can't stall a turn (0 = disabled). Browse gets
+        # a larger backstop than the quick tools (see _timeout_for).
+        timeout = _timeout_for(name)
         coroutine = _with_timeout(handler, name, timeout) if timeout > 0 else handler
         tools.append(
             StructuredTool.from_function(

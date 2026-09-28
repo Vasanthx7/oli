@@ -16,10 +16,9 @@ flowchart TD
     end
 
     subgraph Server["FastAPI app (async)"]
-        API["HTTP API<br/>/api/chat, /api/memories,<br/>/api/tasks, /metrics"]
+        API["HTTP API<br/>/api/chat, /api/memories,<br/>/api/profiles, /metrics"]
         AGENT["LangGraph agent<br/>(StateGraph: agent &harr; tools)"]
         MEM["Memory store<br/>(embed + recall)"]
-        SCHED["Scheduler<br/>(proactive tasks)"]
         STORE["Storage<br/>(async SQLAlchemy)"]
     end
 
@@ -44,8 +43,6 @@ flowchart TD
     AGENT --> STORE
     MEM --> EMB
     MEM --> STORE
-    SCHED -->|"runs due tasks"| AGENT
-    SCHED --> STORE
     STORE --> DB
     API -.->|"scrape"| PROM["Prometheus + Grafana<br/>(optional)"]
 ```
@@ -76,7 +73,6 @@ flowchart TD
 | Live browser | `live_browser.py` | CDP screencast → WebSocket; user-driven sessions *and* watching/taking control of a `browse` run |
 | Memory | `memory.py`, `embeddings.py` | Embed, dedupe, recall; local fastembed model |
 | Storage | `storage.py`, `models.py`, `db.py` | Async SQLAlchemy repository + models + engine |
-| Scheduler | `scheduler.py` | Runs proactive tasks on a schedule → notifications |
 | Speech-to-text | `stt.py` | Groq Whisper transcription for voice |
 | Observability | `metrics.py`, `tracing.py`, `logging_config.py` | Prometheus, LangSmith, structured logs |
 | Config | `config.py` | Typed settings (pydantic-settings) |

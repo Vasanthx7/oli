@@ -78,13 +78,10 @@ async def _offer_login(res: dict) -> str:
         except Exception as e:  # noqa: BLE001
             log.warning("inline_login_failed", profile=name, error=str(e))
     if label:
-        return (
-            f"I have a saved profile for **{label}** but it isn't signed in. Open the "
-            "🔐 Profiles panel and sign in once, then ask me again."
-        )
+        return profiles.relogin_message(label)
     return (
         "That needs me to be signed in to the site, and I don't have a saved login for "
-        "it. Open the 🔐 Profiles panel, add a profile for the site and sign in once "
+        "it. Open the Profiles panel, add a profile for the site and sign in once "
         "(your password never reaches me), then ask me again."
     )
 

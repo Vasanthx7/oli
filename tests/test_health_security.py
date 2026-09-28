@@ -26,3 +26,9 @@ async def test_oversized_request_rejected(client):
     big = b"x" * (26 * 1024 * 1024)
     r = await client.post("/api/chat", content=big)
     assert r.status_code == 413
+
+
+async def test_live_navigate_rejects_file_scheme(client):
+    # A non-http(s) URL is rejected (400) before the browser session is touched.
+    r = await client.post("/api/live/navigate", json={"url": "file:///etc/passwd"})
+    assert r.status_code == 400

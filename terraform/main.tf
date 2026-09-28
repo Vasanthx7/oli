@@ -74,6 +74,8 @@ resource "aws_instance" "oli" {
     home_ollama_tailscale_ip = var.home_ollama_tailscale_ip
     groq_api_key             = var.groq_api_key
     postgres_password        = var.postgres_password
+    auth_username            = var.auth_username
+    auth_password            = var.auth_password
     duckdns_subdomain        = var.duckdns_subdomain
     duckdns_token            = var.duckdns_token
     ghcr_username            = var.ghcr_username

@@ -30,6 +30,17 @@ GUARDRAIL_STOPS = Counter(
     "oli_guardrail_stops_total", "Turns ended early by a harness guardrail", ["kind"]
 )
 
+# --- Structured-decision points (LLM vs Jev comparison; see oli.jev / oli.intent) ---
+# point = the decision (e.g. "intent"); backend = llm | jev. Low cardinality.
+DECISION_LATENCY = Histogram(
+    "oli_decision_duration_seconds", "Decision-point latency in seconds", ["point", "backend"]
+)
+# Shadow-mode field-level agreement between the primary (llm) and shadow (jev) decisions,
+# so we can see how often Jev would have matched before switching. agree = yes | no.
+DECISION_AGREEMENT = Counter(
+    "oli_decision_agreement_total", "Shadow decision field agreement", ["point", "field", "agree"]
+)
+
 
 def render() -> tuple[bytes, str]:
     """Return (payload, content_type) for the /metrics endpoint."""

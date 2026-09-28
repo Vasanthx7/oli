@@ -283,3 +283,38 @@ async def test_run_once_raises_on_error(monkeypatch):
     cid = await store.create_conversation()
     with pytest.raises(RuntimeError, match="model exploded"):
         await agent.run_once(store, cid, "hi")
+
+
+def test_normalize_text_maps_typography_and_strips_icons():
+    """Curly quotes, non-breaking hyphens, and ≈ become ASCII; emoji/arrows/checks
+    are dropped; currency (₹) and em dashes (—) are preserved. See agent._normalize_text."""
+    assert agent._normalize_text("USB‑C plug‑and‑play") == "USB-C plug-and-play"
+    assert agent._normalize_text("“Price” ‘low’") == "\"Price\" 'low'"
+    assert agent._normalize_text("≈ 8 USD") == "~ 8 USD"
+    assert agent._normalize_text("tri…dot") == "tri...dot"
+    # icons removed
+    assert agent._normalize_text("watch ▶ demo") == "watch  demo"
+    assert agent._normalize_text("done ✓ ok") == "done  ok"
+    assert agent._normalize_text("open \U0001f510 panel") == "open  panel"
+    assert agent._normalize_text("go → there") == "go  there"
+    # preserved: currency, accents, em dash
+    assert agent._normalize_text("price ₹259 café — keep") == "price ₹259 café — keep"
+
+
+async def test_run_turn_normalizes_streamed_tokens(monkeypatch):
+    """A token carrying fancy typography reaches the UI as clean ASCII."""
+    events = [
+        {"event": "on_chat_model_stream", "data": {"chunk": SimpleNamespace(content="USB‑C “ok”")}},
+        {
+            "event": "on_chat_model_end",
+            "data": {"output": SimpleNamespace(content="USB‑C “ok”", tool_calls=[])},
+        },
+    ]
+    monkeypatch.setattr(agent, "get_graph", lambda: _FakeGraph(events))
+    store = Storage()
+    cid = await store.create_conversation()
+    out = await _collect(store, cid, "hi")
+    tokens = [e["text"] for e in out if e["type"] == "token"]
+    assert tokens == ['USB-C "ok"']
+    done = [e for e in out if e["type"] == "done"]
+    assert done and done[0]["content"] == 'USB-C "ok"'

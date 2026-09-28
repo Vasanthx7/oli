@@ -33,13 +33,14 @@ from fastapi.responses import (  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, field_validator  # noqa: E402
 
-from . import config, live_browser, memory, metrics, profiles  # noqa: E402
+from . import config, live_browser, memory, metrics, profiles, tts  # noqa: E402
 from .agent import run_turn  # noqa: E402
+from .auth import BasicAuthMiddleware  # noqa: E402
 from .db import dispose_engine, init_models  # noqa: E402
 from .logging_config import configure_logging, get_logger  # noqa: E402
 from .memory import MemoryStore  # noqa: E402
+from .net_guard import UnsafeURLError, validate_url  # noqa: E402
 from .profiles import ProfileManager  # noqa: E402
-from .scheduler import Scheduler, initial_next_run  # noqa: E402
 from .storage import Storage  # noqa: E402
 from .stt import Transcriber  # noqa: E402
 from .tracing import configure_tracing  # noqa: E402
@@ -54,9 +55,6 @@ store = Storage()
 memory_store = MemoryStore(store)
 memory.set_active(memory_store)
 
-# Proactive scheduler runs due tasks in the background for the server's lifetime.
-scheduler = Scheduler(store)
-
 # Persistent browser profiles (authenticated sessions the browse tool can reuse).
 profile_manager = ProfileManager(store)
 profiles.set_active(profile_manager)
@@ -67,12 +65,21 @@ async def lifespan(_app: FastAPI):
     # On SQLite (dev/test) create tables directly; production uses Alembic migrations.
     if not config.settings.is_postgres:
         await init_models()
-    log.info("startup", environment=config.settings.environment, model=config.settings.groq_model)
-    scheduler.start()
+    log.info(
+        "startup",
+        environment=config.settings.environment,
+        model=config.settings.groq_model,
+        auth_enabled=config.settings.auth_enabled,
+    )
+    if config.settings.environment == "production" and not config.settings.auth_enabled:
+        log.warning(
+            "auth_disabled_in_production",
+            detail="AUTH_PASSWORD is not set — every endpoint is publicly reachable. "
+            "Set a strong AUTH_PASSWORD before exposing this app to the internet.",
+        )
     try:
         yield
     finally:
-        await scheduler.stop()
         await profile_manager.shutdown()
         await live_browser.session().stop()
         await dispose_engine()
@@ -80,6 +87,16 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Oli", lifespan=lifespan)
+
+# Gate the entire app (HTTP + WebSocket) behind Basic Auth when a password is set.
+# Added last so it wraps outermost — unauthorized requests are rejected before they
+# reach any other middleware or route. No-op when AUTH_PASSWORD is empty (dev/test).
+if config.settings.auth_enabled:
+    app.add_middleware(
+        BasicAuthMiddleware,
+        username=config.settings.auth_username,
+        password=config.settings.auth_password,
+    )
 
 # Cap request bodies (audio uploads are the largest legitimate payload).
 MAX_REQUEST_BYTES = 25 * 1024 * 1024
@@ -134,14 +151,6 @@ class RenameRequest(BaseModel):
 
 class MemoryRequest(BaseModel):
     content: str
-
-
-class ScheduledTaskRequest(BaseModel):
-    title: str
-    prompt: str
-    schedule_kind: str  # 'interval' | 'daily'
-    interval_sec: int | None = None
-    time_of_day: str | None = None  # 'HH:MM'
 
 
 class ProfileRequest(BaseModel):
@@ -245,6 +254,39 @@ async def transcribe(audio: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
 
 
+# --- voice: text-to-speech ----------------------------------------------
+
+_TTS_MEDIA = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "ogg": "audio/ogg"}
+
+
+class TtsRequest(BaseModel):
+    text: str
+    voice: str | None = None
+
+
+@app.get("/api/tts/voices")
+async def tts_voice_list():
+    """Whether server TTS is on + the provider's voice names (for the frontend picker)."""
+    return {"enabled": tts.enabled(), "voices": tts.voices(), "default": config.settings.tts_voice}
+
+
+@app.post("/api/tts")
+async def tts_synthesize(req: TtsRequest):
+    """Synthesize reply text to audio. 503 when disabled/failed so the client falls back
+    to the browser voice — TTS must never block a reply."""
+    if not tts.enabled():
+        raise HTTPException(status_code=503, detail="Server TTS is disabled")
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty text")
+    try:
+        audio = await tts.Synthesizer().synthesize(text, req.voice)
+    except Exception as e:  # noqa: BLE001 — surface as 503 so the client falls back
+        raise HTTPException(status_code=503, detail=f"{type(e).__name__}: {e}") from e
+    fmt = config.settings.tts_format
+    return Response(content=audio, media_type=_TTS_MEDIA.get(fmt, f"audio/{fmt}"))
+
+
 # --- chat (SSE) ----------------------------------------------------------
 
 
@@ -283,76 +325,6 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-# --- proactive: scheduled tasks -----------------------------------------
-
-
-@app.get("/api/tasks")
-async def list_tasks():
-    return await store.list_scheduled_tasks()
-
-
-@app.post("/api/tasks")
-async def create_task(req: ScheduledTaskRequest):
-    if req.schedule_kind not in ("interval", "daily"):
-        raise HTTPException(status_code=400, detail="schedule_kind must be 'interval' or 'daily'")
-    now = time.time()
-    next_run = initial_next_run(req.schedule_kind, now, req.interval_sec, req.time_of_day)
-    tid = await store.add_scheduled_task(
-        title=req.title,
-        prompt=req.prompt,
-        schedule_kind=req.schedule_kind,
-        next_run=next_run,
-        interval_sec=req.interval_sec,
-        time_of_day=req.time_of_day,
-    )
-    return {"id": tid, "next_run": next_run}
-
-
-@app.post("/api/tasks/{tid}/toggle")
-async def toggle_task(tid: str, enabled: bool):
-    if not await store.get_scheduled_task(tid):
-        raise HTTPException(status_code=404, detail="Task not found")
-    await store.set_task_enabled(tid, enabled)
-    return {"ok": True}
-
-
-@app.post("/api/tasks/{tid}/run")
-async def run_task_now(tid: str):
-    task = await store.get_scheduled_task(tid)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return await scheduler.run_task(task, scheduled=False)
-
-
-@app.delete("/api/tasks/{tid}")
-async def delete_task(tid: str):
-    await store.delete_scheduled_task(tid)
-    return {"ok": True}
-
-
-# --- proactive: notifications -------------------------------------------
-
-
-@app.get("/api/notifications")
-async def list_notifications():
-    return {
-        "unread": await store.unread_count(),
-        "items": await store.list_notifications(),
-    }
-
-
-@app.post("/api/notifications/read")
-async def mark_read():
-    await store.mark_notifications_read()
-    return {"ok": True}
-
-
-@app.delete("/api/notifications/{nid}")
-async def delete_notification(nid: str):
-    await store.delete_notification(nid)
-    return {"ok": True}
 
 
 # --- browser profiles ----------------------------------------------------
@@ -436,7 +408,12 @@ async def live_release():
 
 @app.post("/api/live/navigate")
 async def live_navigate(req: LiveNavigateRequest):
-    await live_browser.session().navigate(req.url)
+    # Only http(s) to a public host — never file:// or an internal/metadata address.
+    try:
+        target = await asyncio.to_thread(validate_url, req.url)
+    except UnsafeURLError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await live_browser.session().navigate(target)
     return live_browser.session().status()
 
 
