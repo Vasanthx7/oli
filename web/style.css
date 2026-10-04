@@ -115,6 +115,10 @@ html, body {
 #live-btn { margin-bottom: 8px; }
 #profiles-btn:hover, #live-btn:hover { background: var(--panel); border-bottom-color: var(--accent); }
 
+/* Active nav item while its panel is open. */
+.nav-btn.active { background: var(--panel); color: var(--accent); border-bottom-color: var(--accent); }
+.nav-btn.active .icon { color: var(--accent); }
+
 /* --- memory modal --- */
 .modal {
   position: fixed;
@@ -124,8 +128,17 @@ html, body {
   align-items: center;
   justify-content: center;
   z-index: 50;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.18s ease, visibility 0.18s ease;
 }
-.modal.hidden { display: none; }
+/* Transition-friendly hidden: keep it in the layout but invisible + inert, so the
+   existing .hidden toggles animate (display:none can't transition). */
+.modal.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .modal-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -135,7 +148,9 @@ html, body {
   display: flex;
   flex-direction: column;
   padding: 20px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
+.modal.hidden .modal-card { transform: translateY(10px) scale(0.985); opacity: 0; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { font-family: var(--font-serif); font-size: 19px; margin: 0; font-weight: 700; }
 #memory-close { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
@@ -424,6 +439,46 @@ html, body {
 .error-line { color: var(--danger); font-size: 14px; }
 .notice-line { color: var(--muted); font-size: 13px; font-style: italic; }
 
+/* --- "thinking" placeholder (before the first token/tool event) --- */
+.thinking-dots { display: inline-flex; gap: 5px; align-items: center; padding: 6px 0; }
+.thinking-dots i {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted);
+  animation: thinking 1.2s ease-in-out infinite;
+}
+.thinking-dots i:nth-child(2) { animation-delay: 0.18s; }
+.thinking-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes thinking {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* --- skeleton shimmer while a conversation loads --- */
+.skeleton-wrap { padding: 8px 0; }
+.msg.skel { opacity: 0.9; }
+.skel-box, .skel-line {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel) 37%, var(--panel-2) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 8px;
+}
+.skel-box { width: 30px; height: 30px; }
+.skel-line { height: 12px; margin: 6px 0; width: 100%; }
+.skel-line.short { width: 55%; }
+.msg.user .skel-line { margin-left: auto; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+/* --- list loading / error rows (memory, profiles, conversations) --- */
+.list-loading, .list-error {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 12px;
+  list-style: none;
+}
+.list-error { color: var(--danger); cursor: pointer; }
+.list-error:hover { text-decoration: underline; }
+
 /* --- composer --- */
 #composer {
   display: flex;
@@ -458,6 +513,9 @@ html, body {
   flex-shrink: 0;
 }
 #send:disabled { opacity: 0.4; cursor: default; }
+/* While a response streams, the send button becomes a Stop button. */
+#send.streaming { background: var(--danger); }
+#send.streaming:hover { filter: brightness(1.08); }
 
 #mic {
   background: var(--panel);
@@ -617,6 +675,64 @@ select:focus-visible,
 #send:hover:not(:disabled) { filter: brightness(1.08); }
 .suggestion:hover { box-shadow: 0 2px 10px -4px rgba(35, 35, 35, 0.25); }
 
+/* --- mobile sidebar drawer --- */
+/* On desktop the toggle + backdrop are inert; below 720px the sidebar becomes an
+   off-canvas drawer reachable via the hamburger (previously it was display:none with
+   no way to open it, hiding chats/memory/profiles/live entirely). */
+.sidebar-toggle { display: none; }
+.sidebar-backdrop { display: none; }
+
 @media (max-width: 720px) {
-  #sidebar { display: none; }
+  .sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 40;
+    width: 40px;
+    height: 40px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .sidebar-toggle .icon { width: 20px; height: 20px; }
+
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(280px, 82vw);
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 40px rgba(35, 35, 35, 0.3);
+  }
+  #sidebar.open { transform: translateX(0); }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(35, 35, 35, 0.45);
+    backdrop-filter: blur(1px);
+  }
+  .sidebar-backdrop.hidden { display: none; }
+
+  /* room so the fixed hamburger doesn't sit on top of the first message */
+  #messages { padding-top: 60px; }
+}
+
+/* Respect reduced-motion: keep the UI legible without animation. */
+@media (prefers-reduced-motion: reduce) {
+  .modal, .modal-card, #sidebar,
+  .thinking-dots i, .skel-box, .skel-line, .tool-chip .spin {
+    transition: none !important;
+    animation: none !important;
+  }
 }
