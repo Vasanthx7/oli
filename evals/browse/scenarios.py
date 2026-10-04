@@ -51,6 +51,12 @@ class Scenario:
     # Has real side effects (books/orders/submits) or needs a human/live login — do NOT
     # run in CI or unattended. Run explicitly, watched, on a throwaway/authorized account.
     manual: bool = False
+    # Optional GROUND-TRUTH grader over the real post-run cart state
+    # (page_state.CartState.as_dict(), supplied by run_vendored via `_run(state_out=...)`).
+    # When set AND the state read succeeded (``ok``), the runner grades on THIS instead of
+    # the answer-string `validate` — closing the hallucination gap that `_stops_before_
+    # purchase` documents (a text-only "added to cart" passes even with an empty cart).
+    validate_state: Callable[[dict], bool] | None = None
 
 
 def _contains_all(*needles: str) -> Callable[[str], bool]:
@@ -234,6 +240,8 @@ E2E_SCENARIOS: list[Scenario] = [
         profile="amazon",
         start_url="https://www.amazon.in/",
         manual=True,
+        # Ground truth: we actually read the live cart (subtotal/count), not just claimed to.
+        validate_state=lambda s: bool(s.get("ok")),
         probes="Auth read on a DENSE page. Fails when: (a) the profile isn't passed to the "
         "loop (runner ran logged-out), (b) cookies expired -> a login wall, (c) 4B mis-reads "
         "the small subtotal on a cluttered cart. Handle: profile auto-resolve (done); "
@@ -264,6 +272,8 @@ E2E_SCENARIOS: list[Scenario] = [
         start_url="https://www.amazon.in/",
         expects_handover=True,
         manual=True,
+        # Ground truth: the cable is really IN the cart (count >= 1), not a hallucinated add.
+        validate_state=lambda s: bool(s.get("ok")) and (s.get("count") or 0) >= 1,
         probes="Interaction on a dense page + a hard critical point. Fails when: 4B lands "
         "NEAR (not on) the small 'Add to cart' control on a cluttered listing; or the model "
         "proceeds toward checkout instead of stopping. Handle: autoroute -> 9B for "
@@ -314,6 +324,8 @@ E2E_SCENARIOS: list[Scenario] = [
         start_url="https://www.amazon.in/",
         expects_handover=True,
         manual=True,
+        # Ground truth: a pack really landed in the cart (count >= 1).
+        validate_state=lambda s: bool(s.get("ok")) and (s.get("count") or 0) >= 1,
         probes="Deep multi-hop: Your Orders -> locate item -> buy-again -> cart. Fails when: "
         "the agent loses the target item across pages after screenshots are trimmed to 3; or "
         "'buy again' vs a fresh search diverge. Handle: facts re-injection as working memory "
@@ -492,6 +504,8 @@ E2E_SCENARIOS: list[Scenario] = [
         start_url="https://www.amazon.in/",
         expects_handover=False,
         manual=True,
+        # Ground truth: exactly one item remains in the cart after the cleanup.
+        validate_state=lambda s: bool(s.get("ok")) and (s.get("count") or 0) == 1,
         probes="Pure DESTRUCTIVE cart mutation (no add): read cart, identify the cheapest, "
         "delete the rest, re-read the subtotal. Stresses per-item Delete grounding + "
         "re-reading state after each change. Fails when: mis-reads prices, deletes the wrong "

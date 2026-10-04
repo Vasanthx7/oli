@@ -106,12 +106,14 @@ async def _run_one(scn: Scenario, attempt: int, model: str, max_steps: int) -> R
     sampler = ResourceSampler(interval=0.5)
     with contextlib.suppress(Exception):
         sampler.__enter__()
+    # Ground-truth cart state captured before teardown, for scenarios with validate_state.
+    state: dict = {}
     try:
         # Call the loop directly (not browse_fara) so we categorize errors ourselves,
         # exactly like run_fara catches into run_error. Pass the scenario's profile AND its
         # start_url so authenticated E2E flows begin on the saved logged-in context and the
         # right site/TLD (else the model wanders to e.g. amazon.com where cookies don't apply).
-        final = (await fb._run(scn.goal, scn.profile, scn.start_url)) or ""
+        final = (await fb._run(scn.goal, scn.profile, scn.start_url, state_out=state)) or ""
         final = final.strip()
         is_done = bool(final) and not final.startswith(_STEP_LIMIT_PREFIX)
     except fb._Unavailable as e:  # model host unreachable
@@ -127,9 +129,15 @@ async def _run_one(scn: Scenario, attempt: int, model: str, max_steps: int) -> R
     with contextlib.suppress(Exception):
         res_stats = sampler.stats()
 
+    # Grade on REAL cart state when the scenario provides a ground-truth check and the
+    # read succeeded; otherwise fall back to the answer-string validator. This is what
+    # stops a hallucinated "added to cart" (empty cart) from scoring a false PASS.
     correct = False
     with contextlib.suppress(Exception):
-        correct = bool(scn.validate(final.lower()))
+        if scn.validate_state is not None and state.get("ok"):
+            correct = bool(scn.validate_state(state))
+        else:
+            correct = bool(scn.validate(final.lower()))
 
     n_steps = len(latencies)
     category = _categorize(

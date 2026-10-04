@@ -78,6 +78,16 @@ def test_browse_engine_defaults_to_fara():
     assert s.browse_engine == "fara"
 
 
+def test_fara_verify_state_defaults_true():
+    s = Settings(groq_api_key="gk", _env_file=None)
+    assert s.fara_verify_state is True
+
+
+def test_fara_verify_state_env_override():
+    s = Settings(groq_api_key="gk", fara_verify_state=False, _env_file=None)
+    assert s.fara_verify_state is False
+
+
 def test_tracing_off_without_key():
     # No LangSmith key and no explicit flag → tracing stays off (offline default).
     s = Settings(langsmith_api_key="", langsmith_tracing=False, _env_file=None)

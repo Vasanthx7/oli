@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     # debugging). When fara_autoroute is on, browse picks this for such tasks.
     fara_model_heavy: str = "fara15-9b"
     fara_autoroute: bool = True
+    # When a cart/order goal reports success, re-read the REAL cart via Playwright
+    # (tools.page_state.read_cart) and downgrade the answer if the live cart contradicts
+    # the claim — anti-hallucination for "added to cart" with an empty cart (ADR 0020).
+    # Advisory only: never fails a genuinely-correct run. Local-only (no model, no cloud —
+    # ADR 0016). Evals grade on the real cart state instead of the answer string.
+    fara_verify_state: bool = True
     # When the Fara host is unreachable, optionally point users at a recorded
     # walkthrough of the workflow instead of a bare error (empty = no link).
     fara_unavailable_url: str = ""

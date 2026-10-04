@@ -220,3 +220,31 @@ async def test_live_stream_and_input_end_to_end():
     finally:
         await s.stop()
     assert s.running is False
+
+
+@pytest.mark.asyncio
+async def test_read_cart_on_real_dom():
+    # Proves the page_state JS scraper extracts cart signals from a real DOM (the pure
+    # parsing is covered offline in test_page_state). Skips where Chromium is absent.
+    if not await _chromium_available():
+        pytest.skip("Playwright Chromium not installed in this environment")
+
+    from playwright.async_api import async_playwright
+
+    from oli.tools import page_state as ps
+
+    html = "<h1>Cart</h1><span id='nav-cart-count'>3</span><div>Subtotal (3 items): ₹1,299.00</div>"
+    async with async_playwright() as p:
+        b = await p.chromium.launch(headless=True)
+        try:
+            page = await b.new_page()
+            # set_content sets HTML as UTF-8 directly — a raw ₹ in a data: URL gets
+            # percent-encoded then mis-decoded into mojibake, which real pages never do.
+            await page.set_content(html)
+            cs = await ps.read_cart(page)
+        finally:
+            await b.close()
+
+    assert cs.ok is True
+    assert cs.count == 3
+    assert cs.subtotal == 1299.0
