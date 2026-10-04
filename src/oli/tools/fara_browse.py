@@ -182,6 +182,107 @@ def _route_model(goal: str) -> tuple[str, str]:
     return config.settings.fara_model, "fast (read/nav)"
 
 
+# --- State-grounded verification (ADR 0020) -------------------------------------------
+# Deterministically re-read the real cart on cart/order goals and downgrade a FALSE
+# success claim. All three helpers below are pure (string-only) so they unit-test offline;
+# the live read lives in `_verify_terminal` behind `settings.fara_verify_state`.
+
+# A NARROW cart/order vocabulary — deliberately not `_INTERACTION_TERMS` (which also
+# covers forms/login/upload, where there is no cart to verify).
+_CART_GOAL_TERMS = (
+    "cart",
+    "basket",
+    "bag",
+    "checkout",
+    "check out",
+    "order",
+    "reorder",
+    "add to",
+    "buy ",
+    "purchase",
+    "subtotal",
+)
+# Words that read as "I did the cart action" vs words that read as "I did NOT".
+_CLAIM_SUCCESS = (
+    "added",
+    "in your cart",
+    "in the cart",
+    "added to cart",
+    "added to your",
+    "only item",
+    "is now in",
+    "placed",
+)
+_CLAIM_FAILURE = (
+    "could not",
+    "couldn't",
+    "unable",
+    "not added",
+    "wasn't able",
+    "was not able",
+    "failed",
+    "is empty",
+    "signed out",
+    "sign in",
+    "log in",
+)
+
+
+def _is_cart_goal(goal: str) -> bool:
+    g = (goal or "").lower()
+    return any(t in g for t in _CART_GOAL_TERMS)
+
+
+def _claims_cart_success(answer: str) -> bool:
+    a = (answer or "").lower()
+    return any(s in a for s in _CLAIM_SUCCESS) and not any(f in a for f in _CLAIM_FAILURE)
+
+
+def _reconcile_answer(answer: str, goal: str, cs: Any) -> str:
+    """PURE decision: amend ``answer`` only on an explicit contradiction with real state.
+
+    ``cs`` is a page_state.CartState with ``ok=True`` (the caller has filtered unknowns).
+    A genuinely-corroborated claim (real count >= 1) is returned unchanged.
+    """
+    g = (goal or "").lower()
+    # Order got placed when the user asked us to stop before ordering — loudest warning.
+    if cs.raw and cs.raw.get("order") and ("stop" in g or "before" in g or "don't" in g):
+        return answer + (
+            "\n\n[State check — IMPORTANT] The page shows an order may have been PLACED, "
+            "but you asked me to stop before ordering. Please review your orders right away."
+        )
+    # Claimed added, but the cart is actually empty → the add did not persist.
+    if cs.empty is True or cs.count == 0:
+        return answer + (
+            "\n\n[State check] I reported the item was added, but the live cart is EMPTY "
+            "(0 items) — the add did not persist (usually a signed-out session). The item "
+            "was NOT added; please re-check or sign in and try again."
+        )
+    # "Only item" goal but the cart still holds more than one.
+    if ("only item" in g or "only thing" in g or "except" in g) and (cs.count or 0) > 1:
+        return answer + (
+            f"\n\n[State check] The live cart actually contains {cs.count} items, not one — "
+            "I did not fully clean up the cart."
+        )
+    return answer
+
+
+async def _verify_terminal(st: _RunState, answer: str) -> str:
+    """Advisory anti-hallucination pass at the terminal answer. Never raises."""
+    if not config.settings.fara_verify_state:
+        return answer
+    if not _is_cart_goal(st.goal) or not _claims_cart_success(answer):
+        return answer
+    from . import page_state
+
+    cs = None
+    with contextlib.suppress(Exception):
+        cs = await page_state.read_cart(st.page)
+    if cs is None or not cs.ok:  # read failed / unknown → trust the model, change nothing
+        return answer
+    return _reconcile_answer(answer, st.goal, cs)
+
+
 # Fara key names → Playwright key names (best-effort; unknowns pass through).
 _KEY_MAP = {
     "return": "Enter",
@@ -720,6 +821,7 @@ async def _drive(st: _RunState) -> tuple[str, str]:
                 _write_summary(st, "paused", question)
                 return "paused", question
             answer = obs or thoughts or "(done)"
+            answer = await _verify_terminal(st, answer)  # advisory state-grounded check
             _write_summary(st, "done", answer)
             return "done", answer
 
@@ -813,14 +915,29 @@ async def _close(st: _RunState) -> None:
             await st.pw.stop()
 
 
-async def _run(goal: str, profile: str | None, start_url: str | None = None) -> str:
+async def _run(
+    goal: str,
+    profile: str | None,
+    start_url: str | None = None,
+    state_out: dict | None = None,
+) -> str:
     """Single-shot, NON-resumable drive (evals / back-compat).
 
     An ``ask_user_question`` returns the question text and ends the run — there is no
-    interactive user here. The resumable production path is ``browse_fara``."""
+    interactive user here. The resumable production path is ``browse_fara``.
+
+    ``state_out`` (eval-only, keyword): when a dict is passed, it is filled with the real
+    post-run cart state (``page_state.read_cart``) captured while the page is still live,
+    so a harness can grade on ground truth instead of the answer string. Back-compatible —
+    positional callers (``run_vendored``/``run_holo``) are unaffected."""
     st = await _new_state(goal, profile, start_url)
     try:
         _kind, payload = await _drive(st)
+        if state_out is not None:  # capture BEFORE _close tears the browser down
+            with contextlib.suppress(Exception):
+                from . import page_state
+
+                state_out.update((await page_state.read_cart(st.page)).as_dict())
         return payload
     finally:
         await _close(st)

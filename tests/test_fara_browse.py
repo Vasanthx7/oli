@@ -7,7 +7,10 @@ manually against a live Ollama; these lock the fiddly bits.)
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from oli.tools import fara_browse as fb
+from oli.tools import page_state as ps
 
 
 def test_to_px_scales_0_1000_to_viewport():
@@ -100,3 +103,92 @@ def test_system_prompt_vendored_verbatim():
     assert "Fara" in fb._SYSTEM_PROMPT
     assert '"enum"' in fb._SYSTEM_PROMPT  # the computer_use action schema
     assert len(fb._SYSTEM_PROMPT) > 5000
+
+
+# --- State-grounded verification (ADR 0020) -------------------------------------------
+
+
+def test_is_cart_goal():
+    assert fb._is_cart_goal("add the cheapest cable to my cart")
+    assert fb._is_cart_goal("check my subtotal")
+    assert fb._is_cart_goal("reorder my last order")
+    assert not fb._is_cart_goal("report the main heading on example.org")
+    assert not fb._is_cart_goal("what classes am I booked into this week")
+
+
+def test_claims_cart_success():
+    assert fb._claims_cart_success("Added to your cart, subtotal ₹499.")
+    assert fb._claims_cart_success("The item is now in the cart.")
+    # Failure words veto a success read.
+    assert not fb._claims_cart_success("I could not add it — the cart is empty.")
+    assert not fb._claims_cart_success("You appear to be signed out, so nothing was added.")
+    assert not fb._claims_cart_success("Here is the weather today.")
+
+
+def test_reconcile_downgrades_empty_cart():
+    cs = ps.CartState(site="amazon", count=0, empty=True, ok=True)
+    out = fb._reconcile_answer("Added the cable to your cart.", "add a cable to my cart", cs)
+    assert "NOT added" in out and "EMPTY" in out
+    assert out.startswith("Added the cable")  # original preserved, warning appended
+
+
+def test_reconcile_keeps_corroborated():
+    cs = ps.CartState(site="amazon", count=2, subtotal=999.0, empty=False, ok=True)
+    ans = "Added the cable; your cart now has 2 items."
+    assert fb._reconcile_answer(ans, "add a cable to my cart", cs) == ans
+
+
+def test_reconcile_only_item_mismatch():
+    cs = ps.CartState(site="amazon", count=3, empty=False, ok=True)
+    out = fb._reconcile_answer(
+        "Done — it's the only item in your cart.",
+        "add the latest iphone, make sure it is the only item in the cart",
+        cs,
+    )
+    assert "actually contains 3 items" in out
+
+
+def test_reconcile_order_placed_on_stop_goal():
+    cs = ps.CartState(site="amazon", count=1, ok=True, raw={"order": True})
+    out = fb._reconcile_answer(
+        "Placed the order.", "add a cable to cart but stop before placing the order", cs
+    )
+    assert "order may have been PLACED" in out
+
+
+async def test_verify_terminal_downgrades_hallucinated_add(monkeypatch):
+    monkeypatch.setattr(fb.config.settings, "fara_verify_state", True)
+
+    async def _fake_read(_page):
+        return ps.CartState(site="amazon", count=0, empty=True, ok=True)
+
+    monkeypatch.setattr(ps, "read_cart", _fake_read)
+    st = SimpleNamespace(goal="add a cable to my cart", page=object())
+    out = await fb._verify_terminal(st, "Added the cable to your cart.")
+    assert "NOT added" in out
+
+
+async def test_verify_terminal_noop_when_flag_off(monkeypatch):
+    monkeypatch.setattr(fb.config.settings, "fara_verify_state", False)
+    st = SimpleNamespace(goal="add a cable to my cart", page=object())
+    ans = "Added the cable to your cart."
+    assert await fb._verify_terminal(st, ans) == ans
+
+
+async def test_verify_terminal_noop_on_non_cart_goal(monkeypatch):
+    monkeypatch.setattr(fb.config.settings, "fara_verify_state", True)
+    st = SimpleNamespace(goal="report the heading on example.org", page=object())
+    ans = "The heading is Example Domain."
+    assert await fb._verify_terminal(st, ans) == ans
+
+
+async def test_verify_terminal_keeps_answer_when_read_unknown(monkeypatch):
+    monkeypatch.setattr(fb.config.settings, "fara_verify_state", True)
+
+    async def _fake_read(_page):
+        return ps.CartState(site="amazon", ok=False)
+
+    monkeypatch.setattr(ps, "read_cart", _fake_read)
+    st = SimpleNamespace(goal="add a cable to my cart", page=object())
+    ans = "Added the cable to your cart."
+    assert await fb._verify_terminal(st, ans) == ans
