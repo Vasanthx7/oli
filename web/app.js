@@ -1286,6 +1286,13 @@ async function startRecording() {
     micBtn.classList.remove("active");
     return;
   }
+  // Voice mode may have been turned off while the permission prompt was open — if so,
+  // release the stream and don't start an invisible recording.
+  if (!voice.mode) {
+    voice.stream.getTracks().forEach((t) => t.stop());
+    voice.stream = null;
+    return;
+  }
   voice.recording = true;
   voice.chunks = [];
   micBtn.classList.add("recording");
