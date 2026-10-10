@@ -353,8 +353,13 @@ function setStreamingUI(on) {
   els.send.disabled = false; // stays clickable while streaming so it can Stop
 }
 
-function stopStream() {
-  if (state.controller) state.controller.abort();
+// Abort the in-flight chat stream. Pass { silent: true } when the abort is a side
+// effect of navigation (e.g. starting a new chat) so it doesn't leave a "Stopped."
+// notice behind.
+function stopStream({ silent = false } = {}) {
+  if (!state.controller) return; // nothing in flight — don't arm silentStop for the next stop
+  if (silent) state.silentStop = true;
+  state.controller.abort();
 }
 
 async function send(message) {
@@ -400,13 +405,14 @@ async function send(message) {
     }
   } catch (err) {
     if (err.name === "AbortError") {
-      addNoticeLine("Stopped.");
+      if (!state.silentStop) addNoticeLine("Stopped.");
     } else {
       addErrorLine(`Connection error: ${err.message}`);
     }
   } finally {
     clearThinking();
     state.controller = null;
+    state.silentStop = false;
     setStreamingUI(false);
     if (assistantBody) assistantBody.classList.remove("cursor");
     loadConversations();
@@ -415,13 +421,17 @@ async function send(message) {
   return assistantText;
 
   function handleEvent(evt) {
-    // Any real output means work has begun — drop the "thinking" placeholder.
-    if (evt.type !== "meta") clearThinking();
+    // The "thinking" placeholder is cleared only when something visible replaces it
+    // (a token, a tool chip, the final message, a notice or an error) — never on
+    // invisible control events like `meta`/`intent`/`end`, which previously left a
+    // blank, frozen-looking gap. Between steps (after a tool ends) it's restored so
+    // the wait always shows activity.
     switch (evt.type) {
       case "meta":
         state.conversationId = evt.conversation_id;
         break;
       case "tool_start":
+        clearThinking();
         activeChip = addToolChip(evt.name, evt.args || {});
         if (evt.name === "browse") enterAgentWatch();
         break;
@@ -432,8 +442,11 @@ async function send(message) {
           activeChip = null;
         }
         if (evt.name === "browse") exitAgentWatch();
+        // More work is likely coming before the first token — keep showing activity.
+        if (!assistantBody) addThinking();
         break;
       case "token":
+        clearThinking();
         if (!assistantBody) {
           assistantBody = addMessage("assistant", "");
           assistantBody.classList.add("cursor");
@@ -443,15 +456,19 @@ async function send(message) {
         scrollToBottom();
         break;
       case "done":
+        clearThinking();
         if (!assistantBody) assistantBody = addMessage("assistant", evt.content || "");
         assistantText = evt.content || assistantText;
         assistantBody.innerHTML = renderMarkdown(assistantText);
         assistantBody.classList.remove("cursor");
         break;
       case "notice":
+        clearThinking();
         addNoticeLine(evt.message);
+        if (!assistantBody) addThinking(); // a reply usually follows the notice
         break;
       case "error":
+        clearThinking();
         addErrorLine(evt.message);
         break;
     }
@@ -505,6 +522,7 @@ els.send.addEventListener("click", (e) => {
   }
 });
 els.newChat.addEventListener("click", () => {
+  stopStream({ silent: true }); // cancel any in-flight reply so the new chat is usable at once
   state.conversationId = null;
   showEmptyState();
   loadConversations();
@@ -1258,7 +1276,8 @@ function speakBrowser(text) {
 }
 
 async function startRecording() {
-  if (voice.recording || state.streaming) return;
+  // Respect a voice-mode turn-off that happened while a resume was queued.
+  if (!voice.mode || voice.recording || state.streaming) return;
   try {
     voice.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
@@ -1332,6 +1351,12 @@ function stopRecording() {
 }
 
 async function onRecordingStop() {
+  // The user turned voice mode off (e.g. clicked the mic to stop) — don't transcribe,
+  // send, or resume. Only the silence-auto-stop path reaches here with voice mode on.
+  if (!voice.mode) {
+    setVoiceStatus("");
+    return;
+  }
   if (!voice.chunks.length) {
     setVoiceStatus(voice.mode ? "Didn't catch that." : "");
     if (voice.mode) setTimeout(startRecording, 400);
@@ -1356,6 +1381,12 @@ async function onRecordingStop() {
     return;
   }
 
+  // Cancelled while transcription was in flight — drop the result, don't send.
+  if (!voice.mode) {
+    setVoiceStatus("");
+    return;
+  }
+
   if (!text.trim()) {
     setVoiceStatus(voice.mode ? "Didn't catch that." : "");
     if (voice.mode) setTimeout(startRecording, 400);
@@ -1375,25 +1406,25 @@ async function onRecordingStop() {
 }
 
 micBtn.addEventListener("click", () => {
-  if (voice.recording) {
-    stopRecording();
-    return;
-  }
-  // Toggle hands-free mode on first click; a running recording stops on next click.
-  voice.mode = !voice.mode;
-  micBtn.classList.toggle("active", voice.mode);
-  // Reveal the voice picker only while voice mode is on, so it doesn't sit under
-  // the composer when the user never uses voice.
-  if (voiceSelect && voiceSelect.options.length) {
-    voiceSelect.classList.toggle("hidden", !voice.mode);
-  }
+  // A mic click always toggles hands-free voice mode. Turning it OFF halts the whole
+  // pipeline from any state — recording, a pending transcription, or in-progress
+  // speech — so there's always a one-click way to stop/cancel.
   if (voice.mode) {
-    startRecording();
-  } else {
+    voice.mode = false;
+    micBtn.classList.remove("active", "recording");
+    if (voiceSelect) voiceSelect.classList.add("hidden");
+    stopRecording();
     setVoiceStatus("");
     window.speechSynthesis && window.speechSynthesis.cancel();
     stopAudio();
+    return;
   }
+  voice.mode = true;
+  micBtn.classList.add("active");
+  // Reveal the voice picker only while voice mode is on, so it doesn't sit under
+  // the composer when the user never uses voice.
+  if (voiceSelect && voiceSelect.options.length) voiceSelect.classList.remove("hidden");
+  startRecording();
 });
 
 // --- init ----------------------------------------------------------------
